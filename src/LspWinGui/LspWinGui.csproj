@@ -8,7 +8,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>LSP Win GUI</AssemblyName>
     <RootNamespace>LspWinGui</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
