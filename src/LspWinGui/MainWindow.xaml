@@ -1,0 +1,68 @@
+<Window x:Class="LspWinGui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LSP Win GUI" Height="760" Width="900" MinHeight="680" MinWidth="760"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource WindowBrush}">
+    <Grid Margin="28">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,22">
+            <StackPanel>
+                <TextBlock Text="LSP Win GUI" FontSize="28" FontWeight="Bold"/>
+                <TextBlock Text="Build the official LSP Audio Plugins from source for Windows VST3" Foreground="{StaticResource MutedBrush}" FontSize="13" Margin="0,5,0,0"/>
+            </StackPanel>
+            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Background="#292238" BorderBrush="#58457D" BorderThickness="1" CornerRadius="12" Padding="10,5">
+                <TextBlock Text="SOURCE BUILD · x64" Foreground="#C7B5FF" FontSize="10" FontWeight="Bold"/>
+            </Border>
+        </Grid>
+        <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,14">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="UPSTREAM SOURCE" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold"/>
+                    <TextBlock Text="lsp-plugins / lsp-plugins" FontSize="16" FontWeight="SemiBold" Margin="0,5,0,2"/>
+                    <TextBlock x:Name="VersionText" Text="Latest source: not checked yet" Foreground="{StaticResource MutedBrush}" FontSize="12"/>
+                </StackPanel>
+                <Button x:Name="CheckButton" Grid.Column="1" Content="Check source" VerticalAlignment="Center" Click="CheckButton_Click"/>
+            </Grid>
+        </Border>
+        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,14">
+            <StackPanel>
+                <TextBlock Text="INSTALL LOCATION" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,9"/>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBox x:Name="InstallPathBox" Text="C:\Program Files\Common Files\VST3" VerticalContentAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" Click="BrowseButton_Click"/>
+                </Grid>
+                <TextBlock Text="You can choose a user-writable VST3 folder to avoid administrator permissions." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,7,0,0"/>
+            </StackPanel>
+        </Border>
+        <Border Grid.Row="3" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,14">
+            <StackPanel>
+                <TextBlock Text="WINDOWS BUILD TOOLS" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,9"/>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBox x:Name="ToolchainPathBox" Text="C:\mingw64" VerticalContentAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" Click="ToolchainBrowseButton_Click"/>
+                </Grid>
+                <TextBlock Text="Expected: MinGW-w64 GCC, GNU Make, Git and PHP on PATH (see README for setup)." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,7,0,0"/>
+            </StackPanel>
+        </Border>
+        <Border Grid.Row="4" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid>
+                    <StackPanel>
+                        <TextBlock Text="BUILD STATUS" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold"/>
+                        <TextBlock x:Name="StatusText" Text="Ready — check upstream source to begin." FontSize="14" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="BuildButton" Content="Build &amp; Install VST3" Background="#7654C8" BorderBrush="#9875F5" Click="BuildButton_Click" IsEnabled="False"/>
+                    </StackPanel>
+                </Grid>
+                <ProgressBar x:Name="BuildProgress" Grid.Row="1" Height="5" Margin="0,16,0,14" Background="#353541" Foreground="#9875F5" BorderThickness="0" IsIndeterminate="False"/>
+                <TextBox x:Name="LogBox" Grid.Row="2" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Cascadia Mono" FontSize="11" Background="#121217" BorderBrush="#30303A"/>
+            </Grid>
+        </Border>
+        <TextBlock Grid.Row="5" Text="Builds are compiled locally from upstream source. Existing plugin bundles are only replaced after a successful build." Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="2,12,0,0"/>
+    </Grid>
+</Window>
