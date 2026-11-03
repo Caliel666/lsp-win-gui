@@ -221,7 +221,7 @@ public sealed class LspBuildService
         // reports i686 even though the selected compiler and plugin target are x64.
         // Without this, host-side tools are incorrectly compiled with -m32.
         var configOutput = await RunAsync(tools.Make,
-            "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64",
+            "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64 PREFIX=/usr/local",
             sourceDir, env, log, cancellationToken);
 
         // .config.mk is an exported variable cache, not a stable human-readable
