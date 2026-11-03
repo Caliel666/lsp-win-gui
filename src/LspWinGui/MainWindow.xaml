@@ -41,7 +41,7 @@
                 <TextBlock Text="WINDOWS BUILD TOOLS" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold" Margin="0,0,0,9"/>
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBox x:Name="ToolchainPathBox" Text="C:\mingw64" VerticalContentAlignment="Center"/>
+                    <TextBox x:Name="ToolchainPathBox" Text="" VerticalContentAlignment="Center"/>
                     <Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" Click="ToolchainBrowseButton_Click"/>
                 </Grid>
                 <TextBlock Text="Auto-detected with PowerShell Get-Command gcc; select a toolchain folder only if it is not on PATH." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,7,0,0"/>
