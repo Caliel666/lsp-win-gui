@@ -286,12 +286,6 @@ public sealed class LspBuildService
         var installRoot = Path.GetFullPath(configuredPrefix.Replace('/', Path.DirectorySeparatorChar));
         if (!installRoot.StartsWith(sourceRoot, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Upstream Windows install prefix '{installRoot}' is outside the source checkout. Refusing to clean or write to that location.");
-        if (Directory.Exists(installRoot))
-        {
-            log.Report($"Removing previous upstream install output at {installRoot}; the source checkout and .build cache remain untouched.");
-            await DeleteDirectorySafelyAsync(installRoot, cancellationToken);
-        }
-        Directory.CreateDirectory(installRoot);
         buildProgress?.Report(new BuildProgressUpdate(15, "Fetching LSP components…", "Updating only dependencies required by this upstream revision."));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
@@ -363,18 +357,24 @@ public sealed class LspBuildService
         }
 
         await RunAsync(tools.Make, $"-j{jobs} VERBOSE=1", sourceDir, env, log, cancellationToken, ObserveBuildLine);
-        buildProgress?.Report(new BuildProgressUpdate(86, "Compilation complete — staging VST3…",
+        buildProgress?.Report(new BuildProgressUpdate(86, "Compilation complete — installing VST3…",
             $"All build targets completed · {totalPlugins} plugin modules discovered · preparing bundle metadata."));
-        log.Report("Staging installation…");
+        log.Report("Preparing temporary VST3 installation output…");
         buildProgress?.Report(new BuildProgressUpdate(90, "Installing VST3 bundle metadata…", "Generating moduleinfo.json directly under the upstream Windows INSTALL prefix."));
+        if (Directory.Exists(installRoot))
+        {
+            log.Report($"Removing previous upstream install output at {installRoot}; the source checkout and .build cache remain untouched.");
+            await DeleteDirectorySafelyAsync(installRoot, cancellationToken);
+        }
+        Directory.CreateDirectory(installRoot);
         log.Report($"Running upstream install without DESTDIR; Windows PREFIX is already absolute: {installRoot}");
         await RunAsync(tools.Make, "install", sourceDir, env, log, cancellationToken);
 
         var bundles = Directory.GetDirectories(installRoot, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
-            throw new InvalidOperationException("The build completed but no .vst3 bundles were found in the staged install. Nothing was installed.");
+            throw new InvalidOperationException($"The build completed but no .vst3 bundles were found under the upstream install prefix '{installRoot}'. Nothing was installed.");
         buildProgress?.Report(new BuildProgressUpdate(95, "Installing VST3 bundles…",
-            $"Staged {bundles.Length} bundle(s) · copying them into {installPath}"));
+            $"Found {bundles.Length} bundle(s) in the temporary install prefix · copying them into {installPath}"));
 
         Directory.CreateDirectory(installPath);
         var backup = Path.Combine(root, "backup");
