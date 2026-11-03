@@ -238,9 +238,11 @@ public sealed class LspBuildService
 
     private static bool IsGitUsrBin(string path)
     {
-        var normalized = path.Replace('/', '\');
-        return normalized.Contains("\Git\usr\bin", StringComparison.OrdinalIgnoreCase) ||
-               normalized.Contains("\Program Files\Git\usr\bin", StringComparison.OrdinalIgnoreCase);
+        var parts = path.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 3 &&
+               parts[^3].Equals("Git", StringComparison.OrdinalIgnoreCase) &&
+               parts[^2].Equals("usr", StringComparison.OrdinalIgnoreCase) &&
+               parts[^1].Equals("bin", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<List<string>> GetCommandPathsAsync(string command, IProgress<string> log, CancellationToken cancellationToken)
