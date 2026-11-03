@@ -55,9 +55,11 @@ public sealed class LspBuildService
         await RunAsync(git, $"clone --filter=blob:none {Repository} \"{sourceDir}\"", root, null, log, cancellationToken);
         await RunAsync(git, $"checkout {commit}", sourceDir, null, log, cancellationToken);
 
+        var gitDirectory = Path.GetDirectoryName(git) ?? "";
+        var gitUsrBin = Path.GetFullPath(Path.Combine(gitDirectory, "..", "usr", "bin"));
         var env = new Dictionary<string, string?>
         {
-            ["PATH"] = string.Join(Path.PathSeparator, new[] { Path.Combine(toolchainRoot, "bin"), Path.GetDirectoryName(git) ?? "", Path.GetDirectoryName(php) ?? "", Environment.GetEnvironmentVariable("PATH") ?? "" }.Where(x => !string.IsNullOrWhiteSpace(x))),
+            ["PATH"] = string.Join(Path.PathSeparator, new[] { Path.Combine(toolchainRoot, "bin"), gitDirectory, Directory.Exists(gitUsrBin) ? gitUsrBin : "", Path.GetDirectoryName(php) ?? "", Environment.GetEnvironmentVariable("PATH") ?? "" }.Where(x => !string.IsNullOrWhiteSpace(x))),
             ["MSYSTEM"] = null
         };
 
@@ -89,19 +91,20 @@ public sealed class LspBuildService
                 var name = Path.GetFileName(source);
                 var destination = Path.Combine(installPath, name);
                 if (Directory.Exists(destination)) Directory.Move(destination, Path.Combine(backup, name));
-                CopyDirectory(source, destination);
                 installed.Add(destination);
+                CopyDirectory(source, destination);
             }
         }
         catch
         {
+            foreach (var path in installed)
+                if (Directory.Exists(path)) Directory.Delete(path, true);
             foreach (var old in Directory.GetDirectories(backup))
             {
                 var destination = Path.Combine(installPath, Path.GetFileName(old));
                 if (Directory.Exists(destination)) Directory.Delete(destination, true);
                 Directory.Move(old, destination);
             }
-            foreach (var path in installed) if (Directory.Exists(path)) Directory.Delete(path, true);
             throw;
         }
 
@@ -143,6 +146,7 @@ public sealed class LspBuildService
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         await process.WaitForExitAsync(cancellationToken);
+        process.WaitForExit();
         if (process.ExitCode != 0) throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Review the build log above.");
     }
 
