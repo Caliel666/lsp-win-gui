@@ -232,6 +232,10 @@ public sealed class LspBuildService
         // .config.mk is an exported variable cache, not a stable human-readable
         // summary. Validate the authoritative summary emitted by make/configure.mk.
         // It prints the resolved target architecture and sorted BUILD_FEATURES list.
+        var configPath = Path.Combine(sourceDir, ".config.mk");
+        var configLines = File.Exists(configPath) ? await File.ReadAllLinesAsync(configPath, cancellationToken) : Array.Empty<string>();
+        var prefixLine = configLines.FirstOrDefault(line => line.StartsWith("PREFIX=", StringComparison.Ordinal));
+        var configuredPrefix = prefixLine is null ? null : prefixLine["PREFIX=".Length..].Trim().Trim('"');
         var targetMatch = Regex.Match(configOutput, @"(?im)^\s*Architecture:\s*([^\r\n]+)");
         var featuresMatch = Regex.Match(configOutput, @"(?im)^\s*Features:\s*([^\r\n]+)");
         var configuredFeatures = featuresMatch.Success
@@ -243,24 +247,25 @@ public sealed class LspBuildService
             !configuredFeatures.Contains("ui", StringComparer.OrdinalIgnoreCase) ||
             !configuredFeatures.Contains("vst3", StringComparer.OrdinalIgnoreCase))
         {
-            var configPath = Path.Combine(sourceDir, ".config.mk");
-            var configSummary = File.Exists(configPath)
-                ? string.Join(Environment.NewLine, File.ReadAllLines(configPath)
-                    .Where(line => line.StartsWith("ARCHITECTURE=", StringComparison.Ordinal) ||
-                                   line.StartsWith("BUILD_FEATURES=", StringComparison.Ordinal) ||
-                                   line.StartsWith("HOST_ARCHITECTURE=", StringComparison.Ordinal)))
-                : "(upstream .config.mk was not created)";
+            var configSummary = configLines
+                .Where(line => line.StartsWith("ARCHITECTURE=", StringComparison.Ordinal) ||
+                               line.StartsWith("BUILD_FEATURES=", StringComparison.Ordinal) ||
+                               line.StartsWith("HOST_ARCHITECTURE=", StringComparison.Ordinal) ||
+                               line.StartsWith("PREFIX=", StringComparison.Ordinal));
             throw new InvalidOperationException(
                 "Upstream configuration did not confirm x86_64 + UI + VST3. " +
                 "Configuration output:\n" + LastLines(configOutput, 20) +
-                "\nRelevant .config.mk values:\n" + configSummary);
+                "\nRelevant .config.mk values:\n" + string.Join(Environment.NewLine, configSummary));
         }
+        if (string.IsNullOrWhiteSpace(configuredPrefix))
+            throw new InvalidOperationException("Upstream did not write PREFIX to .config.mk; refusing to build with an unknown installation prefix.");
         log.Report("Verified plugin target: " + targetMatch.Groups[1].Value.Trim() +
-                   "; configured features: " + string.Join(" ", configuredFeatures));
+                   "; configured features: " + string.Join(" ", configuredFeatures) +
+                   "; Windows install prefix: " + configuredPrefix);
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
         log.Report("Compiling LSP plugins. This may take a while…");
-        await RunAsync(tools.Make, "-j2", sourceDir, env, log, cancellationToken);
+        await RunAsync(tools.Make, "-j2 VERBOSE=1", sourceDir, env, log, cancellationToken);
         log.Report("Staging installation…");
         await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\"", sourceDir, env, log, cancellationToken);
 
