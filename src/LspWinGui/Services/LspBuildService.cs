@@ -98,6 +98,13 @@ public sealed class LspBuildService
                 continue;
             }
 
+            var gccVersion = await CaptureAsync(gcc, "--version", null, cancellationToken);
+            if (gccVersion.ExitCode != 0 || !MeetsMinimumVersion(gccVersion.Output, new Version(7, 0)))
+            {
+                failures.Add($"{gcc}: MinGW-w64 GCC 7.0 or newer is required. Found: {FirstLine(gccVersion.Output)}");
+                continue;
+            }
+
             var candidateLinkerVersion = await CaptureAsync(linker, "-V", null, cancellationToken);
             var gxxVersion = await CaptureAsync(gxx, "--version", null, cancellationToken);
             if (candidateLinkerVersion.ExitCode != 0 || gxxVersion.ExitCode != 0)
@@ -114,6 +121,19 @@ public sealed class LspBuildService
                 var output = Path.Combine(testDir, "toolchain-test.exe");
                 await File.WriteAllTextAsync(source, "int main(void) { return 0; }", cancellationToken);
                 var env = CreateBuildEnvironment(bin, Path.GetDirectoryName(make)!, Path.GetDirectoryName(php)!, null, git);
+
+                // An x86_64-w64-mingw32 triple alone is not enough: verify the
+                // compiler actually defines the Windows x64 ABI macros expected
+                // by LSP's Windows-specific code paths.
+                var macros = await CaptureAsync(gcc, $"-dM -E \"{source}\"", env, cancellationToken);
+                if (macros.ExitCode != 0 ||
+                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN32(?:\\s|$)") ||
+                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN64(?:\\s|$)"))
+                {
+                    failures.Add($"{gcc}: compiler does not expose both _WIN32 and _WIN64 macros. {LastLines(macros.Output, 8)}");
+                    continue;
+                }
+
                 var compile = await CaptureAsync(gcc, $"-v \"{source}\" -o \"{output}\"", env, cancellationToken);
                 if (compile.ExitCode != 0 || !File.Exists(output))
                 {
