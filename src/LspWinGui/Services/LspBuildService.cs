@@ -10,6 +10,7 @@ namespace LspWinGui.Services;
 
 public sealed record UpstreamSource(string Sha, DateTime Date);
 public sealed record BuildResult(int BundleCount, string InstallPath);
+public sealed record BuildProgressUpdate(double Percent, string Status, string Detail, bool IsIndeterminate = false);
 public sealed record ToolchainInfo(string Gcc, string Gxx, string Linker, string Make, string Git, string Php, string CompilerBin, string MakeBin, string Target);
 
 public sealed class LspBuildService
@@ -178,40 +179,59 @@ public sealed class LspBuildService
         return selectedToolchain;
     }
 
-    public async Task<BuildResult> BuildAndInstallAsync(string commit, string toolchainRoot, string installPath, IProgress<string> log, CancellationToken cancellationToken = default)
+    public async Task<BuildResult> BuildAndInstallAsync(string commit, string toolchainRoot, string installPath, IProgress<string> log, CancellationToken cancellationToken = default, IProgress<BuildProgressUpdate>? buildProgress = null)
     {
         var tools = await ValidateToolchainAsync(toolchainRoot, log, cancellationToken);
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LSP-Win-GUI");
         var sourceDir = Path.Combine(root, "source");
         var stageDir = Path.Combine(root, "staging");
         Directory.CreateDirectory(root);
-        if (Directory.Exists(sourceDir))
+        buildProgress?.Report(new BuildProgressUpdate(2, "Preparing source checkout…", "Checking whether the existing source and build cache can be reused."));
+        var existingRepo = Directory.Exists(Path.Combine(sourceDir, ".git"))
+            ? await CaptureAsync(tools.Git, "rev-parse --is-inside-work-tree", null, cancellationToken, sourceDir)
+            : (1, string.Empty);
+        if (existingRepo.ExitCode == 0 && existingRepo.Output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
         {
-            log.Report("Removing the previous source checkout (including read-only Git metadata)…");
-            await DeleteDirectorySafelyAsync(sourceDir, cancellationToken);
+            var current = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken, sourceDir);
+            if (current.ExitCode != 0)
+                throw new InvalidOperationException("The existing source checkout is present but Git could not read its current commit. It was preserved; inspect the checkout before retrying.");
+            if (current.Output.Trim().Equals(commit, StringComparison.OrdinalIgnoreCase))
+                log.Report($"Reusing source checkout at {commit}; preserving fetched dependencies and incremental .build outputs.");
+            else
+            {
+                log.Report($"Updating existing checkout from {current.Output.Trim()} to {commit}; preserving the build cache and dependency repositories.");
+                await RunAsync(tools.Git, "reset --hard", sourceDir, null, log, cancellationToken);
+                await RunAsync(tools.Git, $"fetch --filter=blob:none origin {commit}", sourceDir, null, log, cancellationToken);
+                await RunAsync(tools.Git, $"checkout --detach {commit}", sourceDir, null, log, cancellationToken);
+            }
         }
-        if (Directory.Exists(stageDir))
-            await DeleteDirectorySafelyAsync(stageDir, cancellationToken);
-        Directory.CreateDirectory(stageDir);
-
-        log.Report($"Cloning official source at {commit}…");
-        await RunAsync(tools.Git, $"clone --filter=blob:none {Repository} \"{sourceDir}\"", root, null, log, cancellationToken);
-        await RunAsync(tools.Git, $"checkout {commit}", sourceDir, null, log, cancellationToken);
+        else
+        {
+            if (Directory.Exists(sourceDir))
+            {
+                log.Report("The saved source folder is not a valid Git checkout. Replacing only this invalid checkout.");
+                await DeleteDirectorySafelyAsync(sourceDir, cancellationToken);
+            }
+            log.Report($"Cloning official source at {commit}…");
+            await RunAsync(tools.Git, $"clone --filter=blob:none {Repository} \"{sourceDir}\"", root, null, log, cancellationToken);
+            await RunAsync(tools.Git, $"checkout --detach {commit}", sourceDir, null, log, cancellationToken);
+        }
         var actual = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken, sourceDir);
         if (actual.ExitCode != 0 || !actual.Output.Trim().Equals(commit, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Source checkout mismatch. Requested {commit}, got {actual.Output.Trim()}.");
 
+        // Staging is disposable; the source checkout and .build cache are not.
+        if (Directory.Exists(stageDir))
+            await DeleteDirectorySafelyAsync(stageDir, cancellationToken);
+        Directory.CreateDirectory(stageDir);
+
         var env = CreateBuildEnvironment(tools.CompilerBin, tools.MakeBin, Path.GetDirectoryName(tools.Php)!, log, tools.Git);
         var buildOutputDir = Path.Combine(sourceDir, ".build");
         if (Directory.Exists(buildOutputDir))
-        {
-            log.Report("Removing previous build outputs with Windows-safe directory cleanup…");
-            await DeleteDirectorySafelyAsync(buildOutputDir, cancellationToken);
-        }
+            log.Report("Keeping existing .build outputs for incremental compilation; failed builds can resume without rebuilding completed objects.");
         else
-        {
-            log.Report("Fresh source checkout; no previous build outputs to clean.");
-        }
+            log.Report("No existing .build cache found; this is the first compilation for this checkout.");
+        buildProgress?.Report(new BuildProgressUpdate(8, "Configuring x64 VST3 + UI…", "Existing object files and fetched component repositories will be retained."));
         log.Report("Configuring x64 VST3 + UI targets…");
         // Pass each feature as its own make variable. A space-containing FEATURES
         // assignment is re-emitted through upstream MAKEFLAGS and can be split
@@ -262,12 +282,83 @@ public sealed class LspBuildService
         log.Report("Verified plugin target: " + targetMatch.Groups[1].Value.Trim() +
                    "; configured features: " + string.Join(" ", configuredFeatures) +
                    "; Windows install prefix: " + configuredPrefix);
+        buildProgress?.Report(new BuildProgressUpdate(15, "Fetching LSP components…", "Updating only dependencies required by this upstream revision."));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
+
+        var modulesDir = Path.Combine(sourceDir, "modules");
+        var pluginModules = Directory.Exists(modulesDir)
+            ? Directory.GetDirectories(modulesDir, "lsp-plugins-*", SearchOption.TopDirectoryOnly)
+                .Where(path =>
+                {
+                    var name = Path.GetFileName(path);
+                    return !name.Equals("lsp-plugins-shared", StringComparison.OrdinalIgnoreCase) &&
+                           !name.Equals("lsp-plugins-ab-tester", StringComparison.OrdinalIgnoreCase) &&
+                           Directory.Exists(Path.Combine(path, "src"));
+                })
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var totalPlugins = pluginModules.Count;
+        var completedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var activePlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var currentPlugin = "Preparing plugin build";
+        var jobs = Math.Max(1, Environment.ProcessorCount);
+        log.Report($"Compiling with {jobs} parallel jobs ({Environment.ProcessorCount} logical processors detected).");
+        log.Report(totalPlugins > 0
+            ? $"Discovered {totalPlugins} LSP plugin modules for progress estimation."
+            : "Plugin module count could not be determined; progress will follow build stages and observed targets.");
+        buildProgress?.Report(new BuildProgressUpdate(25, "Compiling LSP plugins…",
+            $"Waiting for compiler output · 0/{totalPlugins} plugin modules complete · {jobs} parallel jobs"));
         log.Report("Compiling LSP plugins. This may take a while…");
-        await RunAsync(tools.Make, "-j2 VERBOSE=1", sourceDir, env, log, cancellationToken);
+
+        void ObserveBuildLine(string line)
+        {
+            var moduleMatch = Regex.Match(line, @"\[(lsp-plugins-[a-z0-9][a-z0-9-]*)\]", RegexOptions.IgnoreCase);
+            if (moduleMatch.Success && pluginModules.Contains(moduleMatch.Groups[1].Value))
+            {
+                currentPlugin = moduleMatch.Groups[1].Value["lsp-plugins-".Length..].Replace('-', ' ');
+                activePlugins.Add(moduleMatch.Groups[1].Value);
+            }
+
+            if (line.Contains("Leaving directory", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var module in pluginModules)
+                {
+                    var native = Path.Combine("modules", module).Replace('\\', '/');
+                    if (line.Replace('\\', '/').Contains(native, StringComparison.OrdinalIgnoreCase))
+                    {
+                        completedPlugins.Add(module);
+                        activePlugins.Remove(module);
+                    }
+                }
+            }
+
+            if (moduleMatch.Success && line.Contains("ld", StringComparison.OrdinalIgnoreCase))
+            {
+                var module = moduleMatch.Groups[1].Value;
+                if (pluginModules.Contains(module))
+                {
+                    completedPlugins.Add(module);
+                    activePlugins.Remove(module);
+                }
+            }
+
+            var ratio = totalPlugins > 0 ? (double)completedPlugins.Count / totalPlugins : 0;
+            var percent = totalPlugins > 0 ? 25 + (60 * ratio) : 25;
+            var detail = totalPlugins > 0
+                ? $"Building: {currentPlugin} · {completedPlugins.Count}/{totalPlugins} plugin modules complete · {activePlugins.Count} active · {jobs} parallel jobs"
+                : $"Building: {currentPlugin} · {jobs} parallel jobs";
+            buildProgress?.Report(new BuildProgressUpdate(percent, "Compiling LSP plugins…", detail));
+        }
+
+        await RunAsync(tools.Make, $"-j{jobs} VERBOSE=1", sourceDir, env, log, cancellationToken, ObserveBuildLine);
+        buildProgress?.Report(new BuildProgressUpdate(86, "Compilation complete — staging VST3…",
+            $"All build targets completed · {totalPlugins} plugin modules discovered · preparing bundle metadata."));
         log.Report("Staging installation…");
-        await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\"", sourceDir, env, log, cancellationToken);
+        buildProgress?.Report(new BuildProgressUpdate(90, "Installing VST3 bundle metadata…", "Generating moduleinfo.json and staging the compiled VST3 bundle."));
+        await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\", sourceDir, env, log, cancellationToken);
 
         var bundles = Directory.GetDirectories(stageDir, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
@@ -373,7 +464,7 @@ public sealed class LspBuildService
         return (process.ExitCode, await outputTask + Environment.NewLine + await errorTask);
     }
 
-    private static async Task<string> RunAsync(string executable, string arguments, string workingDirectory, IDictionary<string, string?>? environment, IProgress<string> log, CancellationToken cancellationToken)
+    private static async Task<string> RunAsync(string executable, string arguments, string workingDirectory, IDictionary<string, string?>? environment, IProgress<string> log, CancellationToken cancellationToken, Action<string>? lineObserver = null)
     {
         var start = new ProcessStartInfo { FileName = executable, Arguments = arguments, WorkingDirectory = workingDirectory, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (environment is not null)
@@ -387,6 +478,7 @@ public sealed class LspBuildService
             if (line is null) return;
             lock (captureLock) captured.AppendLine(line);
             log.Report(line);
+            lineObserver?.Invoke(line);
         }
 
         using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
@@ -399,7 +491,15 @@ public sealed class LspBuildService
         await process.WaitForExitAsync(cancellationToken);
         process.WaitForExit();
         if (process.ExitCode != 0)
-            throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Review the build log above.");
+        {
+            string output;
+            lock (captureLock) output = captured.ToString();
+            var moduleInfoError = Regex.Match(output, @"Error creating moduleinfo\.json file,\s*error=(\d+)", RegexOptions.IgnoreCase);
+            if (moduleInfoError.Success && moduleInfoError.Groups[1].Value == "28")
+                throw new InvalidOperationException(
+                    "VST3 packaging failed while generating moduleinfo.json: upstream LSP status 28 is STATUS_INVALID_VALUE (not Windows error 28 or a disk-space code). The VST3 module-info JSON serializer rejected an invalid write/state or metadata value. The C++ plugin build completed, but the bundle metadata step did not. The source checkout and .build cache have been preserved for diagnosis and retry.\n\nLast build output:\n" + LastLines(output, 35));
+            throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Last build output:\n{LastLines(output, 35)}");
+        }
         lock (captureLock) return captured.ToString();
     }
 
