@@ -76,7 +76,7 @@ public sealed class LspBuildService
             }
         }
         if (make is null)
-            throw new InvalidOperationException("GNU Make was not found. Install GNU Make from MSYS2 (for example, its usr\\bin\\make.exe) and ensure Get-Command make resolves it. Git for Windows usr\\bin tools are deliberately rejected.");
+            throw new InvalidOperationException("GNU Make was not found. Install GNU Make from MSYS2 (for example, its usr\\bin\\make.exe) and ensure Get-Command make resolves it. Git for Windows usr\\bin is kept for shell utilities but is ordered after MinGW.");
 
         ToolchainInfo? selectedToolchain = null;
         var failures = new List<string>();
@@ -127,8 +127,8 @@ public sealed class LspBuildService
                 // by LSP's Windows-specific code paths.
                 var macros = await CaptureAsync(gcc, $"-dM -E \"{source}\"", env, cancellationToken);
                 if (macros.ExitCode != 0 ||
-                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN32(?:\\s|$)") ||
-                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN64(?:\\s|$)"))
+                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN32(?:\s|$)") ||
+                    !Regex.IsMatch(macros.Output, @"(?m)^#define _WIN64(?:\s|$)"))
                 {
                     failures.Add($"{gcc}: compiler does not expose both _WIN32 and _WIN64 macros. {LastLines(macros.Output, 8)}");
                     continue;
