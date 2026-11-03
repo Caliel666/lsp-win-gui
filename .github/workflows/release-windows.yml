@@ -1,0 +1,96 @@
+name: Release Windows app
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lsp-win-gui-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: windows-latest
+    steps:
+      - name: Checkout merged source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Bump app patch version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content "src/LspWinGui/LspWinGui.csproj"
+          $version = [version]$project.Project.PropertyGroup.Version
+          $next = [version]::new($version.Major, $version.Minor, ($version.Build + 1))
+          $nextText = $next.ToString(3)
+          $project.Project.PropertyGroup.Version = $nextText
+          $project.Save((Join-Path $PWD "src/LspWinGui/LspWinGui.csproj"))
+          "version=$nextText" >> $env:GITHUB_OUTPUT
+          "tag=v$nextText" >> $env:GITHUB_OUTPUT
+
+      - name: Generate changelog from commits since previous release
+        shell: pwsh
+        run: |
+          $previous = git tag --list "v*" --sort=-version:refname | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($previous)) {
+            $commits = git log --pretty=format:"- %s (%h)" -n 30 HEAD
+          } else {
+            $commits = git log --pretty=format:"- %s (%h)" "$previous..HEAD"
+          }
+          if ([string]::IsNullOrWhiteSpace(($commits -join ""))) {
+            $commits = "- Maintenance release"
+          }
+          $body = @"
+          ## What's changed
+          $($commits -join "`n")
+
+          **App version:** ${{ steps.version.outputs.version }}
+          **Merged PR:** #${{ github.event.pull_request.number }}
+          "@
+          $body | Set-Content -Path release-notes.md -Encoding utf8
+
+      - name: Commit version bump and tag release
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/LspWinGui/LspWinGui.csproj
+          git commit -m "chore: bump app version to ${{ steps.version.outputs.version }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Restore
+        run: dotnet restore src/LspWinGui/LspWinGui.csproj
+
+      - name: Publish Windows x64
+        run: dotnet publish src/LspWinGui/LspWinGui.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output publish
+
+      - name: Package release ZIP (exclude PDB files)
+        shell: pwsh
+        run: |
+          Get-ChildItem publish -Recurse -File -Filter *.pdb | Remove-Item -Force
+          Compress-Archive -Path "publish/*" -DestinationPath "LSP-Win-GUI-win-x64.zip" -Force
+          if (-not (Test-Path "LSP-Win-GUI-win-x64.zip")) { throw "Release ZIP was not created." }
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: LSP Win GUI ${{ steps.version.outputs.tag }}
+          body_path: release-notes.md
+          files: LSP-Win-GUI-win-x64.zip
+          fail_on_unmatched_files: true

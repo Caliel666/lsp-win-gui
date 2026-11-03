@@ -1,0 +1,38 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [feature/lsp-vst3-builder]
+    paths:
+      - 'src/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore src/LspWinGui/LspWinGui.csproj
+      - name: Build
+        run: dotnet build src/LspWinGui/LspWinGui.csproj --configuration Release --no-restore
+      - name: Publish x64
+        run: dotnet publish src/LspWinGui/LspWinGui.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output publish
+      - name: Upload application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LSP-Win-GUI-win-x64
+          path: publish/
+          if-no-files-found: error
+          retention-days: 14
