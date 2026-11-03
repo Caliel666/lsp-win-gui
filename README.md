@@ -33,7 +33,7 @@ dotnet build src/LspWinGui/LspWinGui.csproj -c Release
 dotnet publish src/LspWinGui/LspWinGui.csproj -c Release -r win-x64 --self-contained true
 ```
 
-GitHub Actions builds and publishes a self-contained Windows x64 executable on pushes to feature/lsp-vst3-builder and on pull requests targeting main. The workflow artifact is named LSP-Win-GUI-win-x64.
+GitHub Actions builds and publishes a self-contained Windows x64 executable on pushes to feature/lsp-vst3-builder and on pull requests targeting main. The workflow artifact is named LSP-Win-GUI-win-x64. When a pull request is merged into main, a separate release workflow increments the app patch version, creates a version tag and GitHub release, generates release notes from the Git commit range since the previous tag, and uploads a Windows x64 ZIP with PDB files removed.
 
 ## Upstream build procedure
 
@@ -41,7 +41,7 @@ The application follows the upstream source-build sequence:
 
 ```sh
 make clean
-make config FEATURES="vst3 ui"
+make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64
 make fetch
 make -j2
 make install DESTDIR=<staging-directory>
