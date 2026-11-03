@@ -39,7 +39,9 @@ GitHub Actions builds and publishes a self-contained Windows x64 executable on p
 
 ## Upstream build procedure
 
-The application follows the upstream source-build sequence. On native Windows it explicitly sets both `ARCHITECTURE=x86_64` and `HOST_BUILD_ARCH=x86_64`; the latter prevents an i686 host detection result from injecting `-m32` into host-side tools. On Windows, it intentionally leaves `PREFIX` unset: upstream `make/paths.mk` defaults it to `$(BASEDIR)/INSTALL`. Overriding it with the POSIX `/usr/local` prefix causes Git for Windows' MSYS shell to rewrite it beneath `C:\\Program Files\\Git`, introducing spaces into the `LSP_INSTALL_PREFIX` compiler definition. The builder relies on `DESTDIR` for staging and verifies the resolved architecture and feature list from the `make config` summary. It does not run `make clean` or delete `.build` on retries: the exact source checkout, fetched module repositories, dependency files, and completed object files are kept so GNU Make can resume incrementally. If the upstream commit changes, the existing checkout is updated in place and Make rebuilds only affected outputs. The compile command uses `-j` with the detected logical processor count. The progress bar estimates completion from the plugin module directories and reports the currently active module; it is an estimate because GNU Make can compile multiple modules concurrently.
+The application follows the upstream source-build sequence. On native Windows it explicitly sets both `ARCHITECTURE=x86_64` and `HOST_BUILD_ARCH=x86_64`; the latter prevents an i686 host detection result from injecting `-m32` into host-side tools. On Windows, it intentionally leaves `PREFIX` unset: upstream `make/paths.mk` defaults it to `$(BASEDIR)/INSTALL`. Overriding it with the POSIX `/usr/local` prefix causes Git for Windows' MSYS shell to rewrite it beneath `C:\\Program Files\\Git`, introducing spaces into the `LSP_INSTALL_PREFIX` compiler definition. The builder verifies the resolved architecture and feature list from the `make config` summary. On Windows, upstream's default `PREFIX` is already an absolute path under the source checkout (`source/INSTALL`), so the builder runs `make install` directly into that temporary install prefix and does **not** pass `DESTDIR`: concatenating two absolute paths would produce an invalid VST3 bundle path. Bundles are copied to the selected VST3 destination only after the complete install succeeds.
+
+It does not run `make clean` or delete `.build` on retries: the exact source checkout, fetched module repositories, dependency files, and completed object files are kept so GNU Make can resume incrementally. If the upstream commit changes, the existing checkout is updated in place and Make rebuilds only affected outputs. The compile command uses `-j` with the detected logical processor count. The progress bar estimates completion from the plugin module directories and reports the currently active module; it is an estimate because GNU Make can compile multiple modules concurrently.
 
 If upstream reports `Error creating moduleinfo.json file, error=28`, that number is an LSP status code (`STATUS_INVALID_VALUE`), not Windows error 28 or a disk-space error. The builder enables a small local diagnostic in the upstream VST3 metadata header so a repeat failure prints the exact serializer operation and source line. This diagnostic changes only the saved checkout, not the official upstream repository.
 
@@ -49,7 +51,7 @@ The build command sequence is:
 make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64
 make fetch
 make -j<N>
-make install DESTDIR=<staging-directory>
+make install
 ```
 
 See the [official LSP build instructions](https://lsp-plug.in/?page=manuals&section=building) and upstream source repository for license notices.
