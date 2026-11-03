@@ -438,9 +438,12 @@ public sealed class LspBuildService
             ["CC"] = null,
             ["CXX"] = null,
             ["LD"] = null,
-            // Prevent a machine-level DESTDIR environment variable from being
-            // inherited: Windows PREFIX is absolute and must not be prefixed.
-            ["DESTDIR"] = null
+            // Force upstream's native Windows PREFIX default and avoid inherited
+            // Unix-style install-prefix variables corrupting drive-qualified paths.
+            ["PREFIX"] = null,
+            ["DESTDIR"] = null,
+            ["MAKEFLAGS"] = null,
+            ["MFLAGS"] = null
         };
         log?.Report("Build PATH order: validated MinGW bin first, GNU Make/PHP next, Git for Windows usr\\bin after MinGW (for sh.exe and Unix build utilities).");
         return result;
