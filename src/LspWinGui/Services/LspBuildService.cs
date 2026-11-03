@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -112,7 +113,7 @@ public sealed class LspBuildService
                 var source = Path.Combine(testDir, "toolchain-test.c");
                 var output = Path.Combine(testDir, "toolchain-test.exe");
                 await File.WriteAllTextAsync(source, "int main(void) { return 0; }", cancellationToken);
-                var env = CreateBuildEnvironment(bin, Path.GetDirectoryName(make)!, Path.GetDirectoryName(php)!, null);
+                var env = CreateBuildEnvironment(bin, Path.GetDirectoryName(make)!, Path.GetDirectoryName(php)!, null, git);
                 var compile = await CaptureAsync(gcc, $"-v \"{source}\" -o \"{output}\"", env, cancellationToken);
                 if (compile.ExitCode != 0 || !File.Exists(output))
                 {
@@ -180,7 +181,7 @@ public sealed class LspBuildService
         if (actual.ExitCode != 0 || !actual.Output.Trim().Equals(commit, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Source checkout mismatch. Requested {commit}, got {actual.Output.Trim()}.");
 
-        var env = CreateBuildEnvironment(tools.CompilerBin, tools.MakeBin, Path.GetDirectoryName(tools.Php)!, log);
+        var env = CreateBuildEnvironment(tools.CompilerBin, tools.MakeBin, Path.GetDirectoryName(tools.Php)!, log, tools.Git);
         var buildOutputDir = Path.Combine(sourceDir, ".build");
         if (Directory.Exists(buildOutputDir))
         {
@@ -195,22 +196,42 @@ public sealed class LspBuildService
         // Pass each feature as its own make variable. A space-containing FEATURES
         // assignment is re-emitted through upstream MAKEFLAGS and can be split
         // into an unintended make target on Windows.
-        await RunAsync(tools.Make, "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 PREFIX=/usr/local", sourceDir, env, log, cancellationToken);
-        var configPath = Path.Combine(sourceDir, ".config.mk");
-        var configText = await File.ReadAllTextAsync(configPath, cancellationToken);
-        // The upstream host architecture is informational; Windows may report i686
-        // while the actual plugin target is correctly configured for x86_64.
-        var targetMatch = Regex.Match(configText, @"(?im)^\s*ARCHITECTURE\s*=\s*([^\r\n#]+)");
-        var featuresMatch = Regex.Match(configText, @"(?im)^\s*(?:BUILD_)?FEATURES\s*=\s*([^\r\n#]+)");
+        // The upstream makefiles derive HOST_BUILD_ARCH from PROCESSOR_ARCHITECTURE.
+        // Force it explicitly: on some native Windows/MinGW combinations the process
+        // reports i686 even though the selected compiler and plugin target are x64.
+        // Without this, host-side tools are incorrectly compiled with -m32.
+        var configOutput = await RunAsync(tools.Make,
+            "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64",
+            sourceDir, env, log, cancellationToken);
+
+        // .config.mk is an exported variable cache, not a stable human-readable
+        // summary. Validate the authoritative summary emitted by make/configure.mk.
+        // It prints the resolved target architecture and sorted BUILD_FEATURES list.
+        var targetMatch = Regex.Match(configOutput, @"(?im)^\s*Architecture:\s*([^\r\n]+)");
+        var featuresMatch = Regex.Match(configOutput, @"(?im)^\s*Features:\s*([^\r\n]+)");
         var configuredFeatures = featuresMatch.Success
-            ? featuresMatch.Groups[1].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            ? Regex.Split(featuresMatch.Groups[1].Value.Trim(), @"\s+")
             : Array.Empty<string>();
-        if (!targetMatch.Success ||
+        if (!configOutput.Contains("Configured OK", StringComparison.OrdinalIgnoreCase) ||
+            !targetMatch.Success ||
             !targetMatch.Groups[1].Value.Contains("x86_64", StringComparison.OrdinalIgnoreCase) ||
             !configuredFeatures.Contains("ui", StringComparer.OrdinalIgnoreCase) ||
             !configuredFeatures.Contains("vst3", StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Upstream configuration did not select the x86_64 plugin target and both UI + VST3 features. Review .config.mk and the build log before continuing.");
-        log.Report("Verified plugin target: x86_64; configured features: " + string.Join(" ", configuredFeatures));
+        {
+            var configPath = Path.Combine(sourceDir, ".config.mk");
+            var configSummary = File.Exists(configPath)
+                ? string.Join(Environment.NewLine, File.ReadAllLines(configPath)
+                    .Where(line => line.StartsWith("ARCHITECTURE=", StringComparison.Ordinal) ||
+                                   line.StartsWith("BUILD_FEATURES=", StringComparison.Ordinal) ||
+                                   line.StartsWith("HOST_ARCHITECTURE=", StringComparison.Ordinal)))
+                : "(upstream .config.mk was not created)";
+            throw new InvalidOperationException(
+                "Upstream configuration did not confirm x86_64 + UI + VST3. " +
+                "Configuration output:\n" + LastLines(configOutput, 20) +
+                "\nRelevant .config.mk values:\n" + configSummary);
+        }
+        log.Report("Verified plugin target: " + targetMatch.Groups[1].Value.Trim() +
+                   "; configured features: " + string.Join(" ", configuredFeatures));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
         log.Report("Compiling LSP plugins. This may take a while…");
@@ -256,26 +277,34 @@ public sealed class LspBuildService
         return new BuildResult(bundles.Length, installPath);
     }
 
-    private static Dictionary<string, string?> CreateBuildEnvironment(string compilerBin, string makeBin, string phpBin, IProgress<string>? log)
+    private static Dictionary<string, string?> CreateBuildEnvironment(
+        string compilerBin, string makeBin, string phpBin, IProgress<string>? log, string? gitExecutable = null)
     {
         var inherited = (Environment.GetEnvironmentVariable("PATH") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(p => p.Trim('"'))
-            .Where(p => !IsGitUsrBin(p) && !string.IsNullOrWhiteSpace(p));
-        var paths = new[] { compilerBin, makeBin, phpBin }.Concat(inherited).Distinct(StringComparer.OrdinalIgnoreCase);
+            .Where(p => !string.IsNullOrWhiteSpace(p));
+
+        // Git for Windows usr\\bin provides sh.exe and utilities (cp, install, sed,
+        // rm, etc.) required by the upstream GNU Make recipes. Keep it on PATH,
+        // but AFTER MinGW so gcc's matching ld.exe/as.exe/ar.exe always take priority.
+        var gitUsrBin = string.IsNullOrWhiteSpace(gitExecutable)
+            ? null
+            : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(gitExecutable)!, "..", "usr", "bin"));
+        var paths = new[] { compilerBin, makeBin, phpBin }
+            .Concat(gitUsrBin is not null && Directory.Exists(gitUsrBin) ? new[] { gitUsrBin } : Array.Empty<string>())
+            .Concat(inherited)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
         var result = new Dictionary<string, string?>
         {
             ["PATH"] = string.Join(Path.PathSeparator, paths),
             ["MSYSTEM"] = null,
-            // The upstream build scripts use PROCESSOR_ARCHITECTURE when running
-            // under native Windows rather than MinGW/MSYS. Force the validated
-            // x64 toolchain target so both host and target builds are x64.
             ["PROCESSOR_ARCHITECTURE"] = "AMD64",
             ["CC"] = null,
             ["CXX"] = null,
             ["LD"] = null
         };
-        log?.Report("Build PATH puts the validated MinGW bin directory first and excludes Git for Windows usr\\bin to prevent ld.exe collisions.");
+        log?.Report("Build PATH order: validated MinGW bin first, GNU Make/PHP next, Git for Windows usr\\bin after MinGW (for sh.exe and Unix build utilities).");
         return result;
     }
 
@@ -314,22 +343,34 @@ public sealed class LspBuildService
         return (process.ExitCode, await outputTask + Environment.NewLine + await errorTask);
     }
 
-    private static async Task RunAsync(string executable, string arguments, string workingDirectory, IDictionary<string, string?>? environment, IProgress<string> log, CancellationToken cancellationToken)
+    private static async Task<string> RunAsync(string executable, string arguments, string workingDirectory, IDictionary<string, string?>? environment, IProgress<string> log, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo { FileName = executable, Arguments = arguments, WorkingDirectory = workingDirectory, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         if (environment is not null)
             foreach (var item in environment)
                 if (item.Value is null) start.Environment.Remove(item.Key); else start.Environment[item.Key] = item.Value;
+
+        var captured = new StringBuilder();
+        var captureLock = new object();
+        void Record(string? line)
+        {
+            if (line is null) return;
+            lock (captureLock) captured.AppendLine(line);
+            log.Report(line);
+        }
+
         using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) log.Report(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) log.Report(e.Data); };
+        process.OutputDataReceived += (_, e) => Record(e.Data);
+        process.ErrorDataReceived += (_, e) => Record(e.Data);
         log.Report($"> {Path.GetFileName(executable)} {arguments}");
         if (!process.Start()) throw new InvalidOperationException($"Could not start {executable}.");
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         await process.WaitForExitAsync(cancellationToken);
         process.WaitForExit();
-        if (process.ExitCode != 0) throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Review the build log above.");
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Review the build log above.");
+        lock (captureLock) return captured.ToString();
     }
 
     private static bool MeetsMinimumVersion(string output, Version minimum)
