@@ -1,6 +1,5 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Forms;
 using LspWinGui.Services;
 
 namespace LspWinGui;
@@ -41,14 +40,14 @@ public partial class MainWindow : Window
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new FolderBrowserDialog { Description = "Choose the VST3 installation folder", SelectedPath = InstallPathBox.Text };
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK) InstallPathBox.Text = dialog.SelectedPath;
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Choose the VST3 installation folder", InitialDirectory = Directory.Exists(InstallPathBox.Text) ? InstallPathBox.Text : Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) };
+        if (dialog.ShowDialog(this) == true) InstallPathBox.Text = dialog.FolderName;
     }
 
     private void ToolchainBrowseButton_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new FolderBrowserDialog { Description = "Choose your MinGW-w64 installation folder", SelectedPath = ToolchainPathBox.Text };
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK) ToolchainPathBox.Text = dialog.SelectedPath;
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Choose your MinGW-w64 installation folder", InitialDirectory = Directory.Exists(ToolchainPathBox.Text) ? ToolchainPathBox.Text : Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) };
+        if (dialog.ShowDialog(this) == true) ToolchainPathBox.Text = dialog.FolderName;
     }
 
     private async void BuildButton_Click(object sender, RoutedEventArgs e)
