@@ -190,10 +190,19 @@ public sealed class LspBuildService
         await RunAsync(tools.Make, "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 PREFIX=/usr/local", sourceDir, env, log, cancellationToken);
         var configPath = Path.Combine(sourceDir, ".config.mk");
         var configText = await File.ReadAllTextAsync(configPath, cancellationToken);
-        if (!Regex.IsMatch(configText, @"(?m)^ARCHITECTURE=x86_64\\s*$") ||
-            !Regex.IsMatch(configText, @"(?m)^HOST_ARCHITECTURE=x86_64\\s*$") ||
-            !Regex.IsMatch(configText, @"(?m)^BUILD_FEATURES=.*\\bui\\b.*\\bvst3\\b"))
-            throw new InvalidOperationException("Upstream configuration did not select x86_64 host/target architecture and both UI + VST3 features. Review .config.mk and the build log before continuing.");
+        // The upstream host architecture is informational; Windows may report i686
+        // while the actual plugin target is correctly configured for x86_64.
+        var targetMatch = Regex.Match(configText, @"(?im)^\s*ARCHITECTURE\s*=\s*([^\r\n#]+)");
+        var featuresMatch = Regex.Match(configText, @"(?im)^\s*(?:BUILD_)?FEATURES\s*=\s*([^\r\n#]+)");
+        var configuredFeatures = featuresMatch.Success
+            ? featuresMatch.Groups[1].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            : Array.Empty<string>();
+        if (!targetMatch.Success ||
+            !targetMatch.Groups[1].Value.Contains("x86_64", StringComparison.OrdinalIgnoreCase) ||
+            !configuredFeatures.Contains("ui", StringComparer.OrdinalIgnoreCase) ||
+            !configuredFeatures.Contains("vst3", StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Upstream configuration did not select the x86_64 plugin target and both UI + VST3 features. Review .config.mk and the build log before continuing.");
+        log.Report("Verified plugin target: x86_64; configured features: " + string.Join(" ", configuredFeatures));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
         log.Report("Compiling LSP plugins. This may take a while…");
