@@ -1,22 +1,27 @@
 # LSP Win GUI
 
-A small Windows x64 desktop utility that checks the latest upstream LSP Audio Plugins source, builds the VST3 + UI targets locally, and installs the resulting bundles.
+A Windows x64 desktop utility that checks the latest upstream LSP Audio Plugins source, validates the Windows compiler toolchain, builds VST3 + UI targets, and installs the resulting bundles.
 
 ## What it does
 
 - Checks the latest commit in the official [lsp-plugins/lsp-plugins](https://github.com/lsp-plugins/lsp-plugins) repository.
-- Clones that exact commit and fetches the component repositories using the upstream `make fetch` target.
-- Configures and compiles the VST3 + UI targets.
-- Stages the install and only copies bundles into the selected VST3 folder after a successful build.
-- Keeps a live build log in the GUI.
+- Compares the latest upstream commit with the last successfully installed source commit.
+- Saves settings and source-version state in %LOCALAPPDATA%\\LSP-Win-GUI\\settings.json.
+- Uses PowerShell Get-Command gcc -All to discover the actual GCC executable instead of assuming a MinGW installation path.
+- Verifies that GCC targets x86_64-w64-mingw32, that matching G++ and ld.exe exist beside GCC, and that both C and C++ compile-and-link smoke tests succeed before it modifies the source checkout.
+- Rejects Git for Windows usr\\bin as a build-tool directory and places the validated MinGW bin directory first in the build PATH to prevent incompatible linker collisions.
+- Clones the exact checked commit, fetches upstream component repositories, stages the install, and only copies VST3 bundles after a successful build.
 
-The default install location is `C:\\Program Files\\Common Files\\VST3`. You can select a user-writable directory to avoid elevation.
+The default install location is C:\\Program Files\\Common Files\\VST3. You can select a user-writable directory to avoid elevation.
 
 ## Build prerequisites
 
-LSP's official Windows build instructions require MinGW-w64 GCC, GNU Make 4.2+, Git, and PHP 5.5.14+. Install these tools and ensure `git`, `make`, `gcc`, and `php` are available on PATH. The MinGW installation folder can also be selected in the app; its `bin` directory is added to the build PATH.
+- MinGW-w64 x64 GCC, G++, and matching binutils/linker.
+- GNU Make 4.2 or newer (MSYS2 GNU Make is recommended).
+- Git for Windows.
+- PHP 5.5.14 or newer.
 
-The upstream project may require additional Windows development libraries depending on the source revision. The app reports compiler/configuration failures in its live log; it does not download or redistribute LSP's paid Windows binaries.
+The app discovers commands through PowerShell. If GCC is not on PATH, use the toolchain folder picker to point at the MinGW-w64 root or its bin folder. It will not silently guess C:\\mingw64. A failed compiler/linker smoke test stops the build before source checkout or cleanup.
 
 ## Build the GUI
 
@@ -28,7 +33,7 @@ dotnet build src/LspWinGui/LspWinGui.csproj -c Release
 dotnet publish src/LspWinGui/LspWinGui.csproj -c Release -r win-x64 --self-contained true
 ```
 
-GitHub Actions builds and publishes a self-contained Windows x64 executable on pushes to `feature/lsp-vst3-builder` and on pull requests targeting `main`. The workflow artifact is named `LSP-Win-GUI-win-x64`.
+GitHub Actions builds and publishes a self-contained Windows x64 executable on pushes to feature/lsp-vst3-builder and on pull requests targeting main. The workflow artifact is named LSP-Win-GUI-win-x64.
 
 ## Upstream build procedure
 
