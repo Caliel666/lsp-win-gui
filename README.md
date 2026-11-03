@@ -37,11 +37,11 @@ GitHub Actions builds and publishes a self-contained Windows x64 executable on p
 
 ## Upstream build procedure
 
-The application follows the upstream source-build sequence. On native Windows it explicitly sets both `ARCHITECTURE=x86_64` and `HOST_BUILD_ARCH=x86_64`; the latter prevents an i686 host detection result from injecting `-m32` into host-side tools. It uses `/usr/local` as a relocatable prefix so `DESTDIR` staging works on Windows, and verifies the resolved architecture and feature list from the `make config` summary (rather than guessing from internal `.config.mk` formatting):
+The application follows the upstream source-build sequence. On native Windows it explicitly sets both `ARCHITECTURE=x86_64` and `HOST_BUILD_ARCH=x86_64`; the latter prevents an i686 host detection result from injecting `-m32` into host-side tools. On Windows, it intentionally leaves `PREFIX` unset: upstream `make/paths.mk` defaults it to `$(BASEDIR)/INSTALL`. Overriding it with the POSIX `/usr/local` prefix causes Git for Windows' MSYS shell to rewrite it beneath `C:\\Program Files\\Git`, introducing spaces into the `LSP_INSTALL_PREFIX` compiler definition. The builder relies on `DESTDIR` for staging and verifies the resolved architecture and feature list from the `make config` summary:
 
 ```sh
 make clean
-make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64 PREFIX=/usr/local
+make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64
 make fetch
 make -j2
 make install DESTDIR=<staging-directory>
