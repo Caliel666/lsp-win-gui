@@ -44,7 +44,7 @@
                     <TextBox x:Name="ToolchainPathBox" Text="C:\mingw64" VerticalContentAlignment="Center"/>
                     <Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" Click="ToolchainBrowseButton_Click"/>
                 </Grid>
-                <TextBlock Text="Expected: MinGW-w64 GCC, GNU Make, Git and PHP on PATH (see README for setup)." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,7,0,0"/>
+                <TextBlock Text="Auto-detected with PowerShell Get-Command gcc; select a toolchain folder only if it is not on PATH." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,7,0,0"/>
             </StackPanel>
         </Border>
         <Border Grid.Row="4" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18">
