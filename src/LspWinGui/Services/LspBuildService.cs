@@ -97,9 +97,9 @@ public sealed class LspBuildService
                 continue;
             }
 
-            var linkerVersion = await CaptureAsync(linker, "-V", null, cancellationToken);
+            var candidateLinkerVersion = await CaptureAsync(linker, "-V", null, cancellationToken);
             var gxxVersion = await CaptureAsync(gxx, "--version", null, cancellationToken);
-            if (linkerVersion.ExitCode != 0 || gxxVersion.ExitCode != 0)
+            if (candidateLinkerVersion.ExitCode != 0 || gxxVersion.ExitCode != 0)
             {
                 failures.Add($"{gcc}: matching linker or C++ compiler could not run");
                 continue;
