@@ -55,10 +55,10 @@ jobs:
           }
           $body = @"
           ## What's changed
-          $($commits -join "\n")
+          $($commits -join "`n")
 
-          **App version:** \${{ steps.version.outputs.version }}
-          **Merged PR:** #\${{ github.event.pull_request.number }}
+          **App version:** ${{ steps.version.outputs.version }}
+          **Merged PR:** #${{ github.event.pull_request.number }}
           "@
           $body | Set-Content -Path release-notes.md -Encoding utf8
 
@@ -68,10 +68,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/LspWinGui/LspWinGui.csproj
-          git commit -m "chore: bump app version to \${{ steps.version.outputs.version }}"
-          git tag "\${{ steps.version.outputs.tag }}"
+          git commit -m "chore: bump app version to ${{ steps.version.outputs.version }}"
+          git tag "${{ steps.version.outputs.tag }}"
           git push origin HEAD:main
-          git push origin "\${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Restore
         run: dotnet restore src/LspWinGui/LspWinGui.csproj
@@ -89,8 +89,8 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: \${{ steps.version.outputs.tag }}
-          name: LSP Win GUI \${{ steps.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: LSP Win GUI ${{ steps.version.outputs.tag }}
           body_path: release-notes.md
           files: LSP-Win-GUI-win-x64.zip
           fail_on_unmatched_files: true
