@@ -43,7 +43,7 @@ The application follows the upstream source-build sequence. On native Windows it
 
 It does not run `make clean` or delete `.build` on retries: the exact source checkout, fetched module repositories, dependency files, and completed object files are kept so GNU Make can resume incrementally. If the upstream commit changes, the existing checkout is updated in place and Make rebuilds only affected outputs. The compile command uses `-j` with the detected logical processor count. The progress bar estimates completion from the plugin module directories and reports the currently active module; it is an estimate because GNU Make can compile multiple modules concurrently.
 
-If upstream reports `Error creating moduleinfo.json file, error=28`, that number is an LSP status code (`STATUS_INVALID_VALUE`), not Windows error 28 or a disk-space error. The builder enables a small local diagnostic in the upstream VST3 metadata header so a repeat failure prints the exact serializer operation and source line. This diagnostic changes only the saved checkout, not the official upstream repository.
+The previous `Error creating moduleinfo.json file, error=28` failure was caused by passing `DESTDIR` while the Windows prefix was already absolute. LSP status 28 is `STATUS_INVALID_VALUE`; it is not Windows error 28 or a disk-space error. The builder now avoids that invalid path concatenation and uses the native Windows prefix directly.
 
 The build command sequence is:
 
