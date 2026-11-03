@@ -164,8 +164,13 @@ public sealed class LspBuildService
         var sourceDir = Path.Combine(root, "source");
         var stageDir = Path.Combine(root, "staging");
         Directory.CreateDirectory(root);
-        if (Directory.Exists(sourceDir)) Directory.Delete(sourceDir, true);
-        if (Directory.Exists(stageDir)) Directory.Delete(stageDir, true);
+        if (Directory.Exists(sourceDir))
+        {
+            log.Report("Removing the previous source checkout (including read-only Git metadata)…");
+            await DeleteDirectorySafelyAsync(sourceDir, cancellationToken);
+        }
+        if (Directory.Exists(stageDir))
+            await DeleteDirectorySafelyAsync(stageDir, cancellationToken);
         Directory.CreateDirectory(stageDir);
 
         log.Report($"Cloning official source at {commit}…");
@@ -193,7 +198,7 @@ public sealed class LspBuildService
 
         Directory.CreateDirectory(installPath);
         var backup = Path.Combine(root, "backup");
-        if (Directory.Exists(backup)) Directory.Delete(backup, true);
+        if (Directory.Exists(backup)) await DeleteDirectorySafelyAsync(backup, cancellationToken);
         Directory.CreateDirectory(backup);
         var installed = new List<string>();
         try
@@ -306,6 +311,47 @@ public sealed class LspBuildService
 
     private static string FirstLine(string value) => value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "(version unavailable)";
     private static string LastLines(string value, int count) => string.Join(Environment.NewLine, value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).TakeLast(count));
+
+    private static async Task DeleteDirectorySafelyAsync(string path, CancellationToken cancellationToken)
+    {
+        const int attempts = 4;
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!Directory.Exists(path)) return;
+
+            try
+            {
+                // Git metadata (notably commit-graph-chain) can carry the read-only
+                // attribute. Directory.Delete(recursive: true) does not clear it.
+                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+
+                foreach (var directory in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories)
+                             .OrderByDescending(d => d.Length))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.SetAttributes(directory, FileAttributes.Directory);
+                }
+
+                File.SetAttributes(path, FileAttributes.Directory);
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(350 * attempt), cancellationToken);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+            {
+                throw new IOException(
+                    $"Could not remove '{path}' after {attempts} attempts. A file may be locked by Git/antivirus, or the folder ACL may deny access. Close tools using the checkout and retry. Original error: {ex.Message}", ex);
+            }
+        }
+    }
 
     private static void CopyDirectory(string source, string destination)
     {
