@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace LspWinGui.Services;
 
@@ -54,6 +55,11 @@ public sealed class LspBuildService
             ?? throw new InvalidOperationException("Git was not found. Install Git for Windows and make sure Get-Command git resolves it.");
         var php = phpPaths.FirstOrDefault(File.Exists)
             ?? throw new InvalidOperationException("PHP was not found. Install PHP 5.5.14 or newer and make sure Get-Command php resolves it.");
+        var gitVersion = await CaptureAsync(git, "--version", null, cancellationToken);
+        var phpVersion = await CaptureAsync(php, "-v", null, cancellationToken);
+        if (gitVersion.ExitCode != 0) throw new InvalidOperationException($"Git was found at {git}, but could not run: {LastLines(gitVersion.Output, 4)}");
+        if (phpVersion.ExitCode != 0 || !MeetsMinimumVersion(phpVersion.Output, new Version(5, 5, 14)))
+            throw new InvalidOperationException($"PHP 5.5.14 or newer is required. Found: {FirstLine(phpVersion.Output)}");
 
         string? make = null;
         foreach (var candidate in makePaths.Where(File.Exists))
@@ -61,7 +67,8 @@ public sealed class LspBuildService
             var dir = Path.GetDirectoryName(candidate)!;
             if (IsGitUsrBin(dir)) continue;
             var version = await CaptureAsync(candidate, "--version", null, cancellationToken);
-            if (version.ExitCode == 0 && version.Output.Contains("GNU Make", StringComparison.OrdinalIgnoreCase))
+            if (version.ExitCode == 0 && version.Output.Contains("GNU Make", StringComparison.OrdinalIgnoreCase) &&
+                MeetsMinimumVersion(version.Output, new Version(4, 2)))
             {
                 make = candidate;
                 break;
@@ -137,14 +144,15 @@ public sealed class LspBuildService
                 "\n\nInstall a matching MinGW-w64 GCC + G++ + binutils toolchain. The selected gcc.exe, g++.exe and ld.exe must come from the same bin directory.");
 
         var makeVersion = await CaptureAsync(selectedToolchain.Make, "--version", null, cancellationToken);
-        var phpVersion = await CaptureAsync(selectedToolchain.Php, "-v", null, cancellationToken);
-        log.Report($"PowerShell Get-Command gcc resolved: {selectedToolchain.Gcc}");
+        var linkerVersion = await CaptureAsync(selectedToolchain.Linker, "-V", null, cancellationToken);
+        log.Report($"PowerShell (Get-Command gcc).Source resolved: {selectedToolchain.Gcc}");
         log.Report($"Compiler target: {selectedToolchain.Target}");
         log.Report($"Matching C++ compiler: {selectedToolchain.Gxx}");
         log.Report($"Matching linker: {selectedToolchain.Linker}");
         log.Report($"GNU Make: {selectedToolchain.Make} — {FirstLine(makeVersion.Output)}");
         log.Report($"Git: {selectedToolchain.Git}");
         log.Report($"PHP: {selectedToolchain.Php} — {FirstLine(phpVersion.Output)}");
+        log.Report($"Linker emulations: {LastLines(linkerVersion.Output, 4)}");
         log.Report("C and C++ compile-and-link smoke tests passed. Toolchain is ready.");
         return selectedToolchain;
     }
@@ -247,8 +255,8 @@ public sealed class LspBuildService
 
     private static async Task<List<string>> GetCommandPathsAsync(string command, IProgress<string> log, CancellationToken cancellationToken)
     {
-        var script = $"Get-Command {command} -All | Where-Object {{ $_.CommandType -eq 'Application' }} | ForEach-Object {{ $_.Source }}";
-        log.Report($"PowerShell: (Get-Command {command} -All).Source");
+        var script = $"$first = (Get-Command {command}).Source; if ($first) {{ $first }}; Get-Command {command} -All | Where-Object {{ $_.CommandType -eq 'Application' }} | ForEach-Object {{ $_.Source }}";
+        log.Report($"PowerShell: (Get-Command {command}).Source and Get-Command {command} -All");
         var result = await CaptureAsync("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"", null, cancellationToken);
         if (result.ExitCode != 0) return new List<string>();
         return result.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
@@ -285,6 +293,15 @@ public sealed class LspBuildService
         await process.WaitForExitAsync(cancellationToken);
         process.WaitForExit();
         if (process.ExitCode != 0) throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Review the build log above.");
+    }
+
+    private static bool MeetsMinimumVersion(string output, Version minimum)
+    {
+        var match = Regex.Match(output, @"\b(\d+)\.(\d+)(?:\.(\d+))?");
+        if (!match.Success) return false;
+        var version = new Version(int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value),
+            match.Groups[3].Success ? int.Parse(match.Groups[3].Value) : 0);
+        return version >= minimum;
     }
 
     private static string FirstLine(string value) => value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "(version unavailable)";
