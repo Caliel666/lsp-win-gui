@@ -71,9 +71,7 @@ public sealed class LspBuildService
         log.Report("Staging installation…");
         await RunAsync(make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\"", sourceDir, env, log, cancellationToken);
 
-        var bundles = Directory.GetFiles(stageDir, "*.vst3", SearchOption.AllDirectories)
-            .Where(path => Directory.Exists(path))
-            .ToArray();
+        var bundles = Directory.GetDirectories(stageDir, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
             throw new InvalidOperationException("The build completed but no .vst3 bundles were found in the staged install. Nothing was installed.");
 
@@ -96,8 +94,13 @@ public sealed class LspBuildService
         }
         catch
         {
+            foreach (var old in Directory.GetDirectories(backup))
+            {
+                var destination = Path.Combine(installPath, Path.GetFileName(old));
+                if (Directory.Exists(destination)) Directory.Delete(destination, true);
+                Directory.Move(old, destination);
+            }
             foreach (var path in installed) if (Directory.Exists(path)) Directory.Delete(path, true);
-            foreach (var old in Directory.GetDirectories(backup)) Directory.Move(old, Path.Combine(installPath, Path.GetFileName(old)));
             throw;
         }
 
@@ -112,7 +115,7 @@ public sealed class LspBuildService
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         candidates.AddRange(path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Select(p => Path.Combine(p.Trim('"'), fileName)));
         var found = candidates.FirstOrDefault(File.Exists);
-        return found ?? (OperatingSystem.IsWindows() ? command : null);
+        return found;
     }
 
     private static async Task RunAsync(string executable, string arguments, string workingDirectory, IDictionary<string, string?>? environment, IProgress<string> log, CancellationToken cancellationToken)
