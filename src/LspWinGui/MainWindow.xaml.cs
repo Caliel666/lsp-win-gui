@@ -33,6 +33,7 @@ public partial class MainWindow : Window
 
     private async void CheckButton_Click(object sender, RoutedEventArgs e)
     {
+        ClearErrorDetails();
         SetBusy(true, "Checking upstream source…");
         try
         {
@@ -76,6 +77,7 @@ public partial class MainWindow : Window
 
     private async void BuildButton_Click(object sender, RoutedEventArgs e)
     {
+        ClearErrorDetails();
         if (string.IsNullOrWhiteSpace(_latestCommit))
         {
             MessageBox.Show(this, "Check upstream source first.", "LSP Win GUI", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -113,6 +115,12 @@ public partial class MainWindow : Window
             ShowErrorDetails("Build failed", ex);
         }
         finally { SetBusy(false); }
+    }
+
+    private void ClearErrorDetails()
+    {
+        _lastErrorDetails = null;
+        CopyErrorButton.Visibility = Visibility.Collapsed;
     }
 
     private void ShowErrorDetails(string title, Exception exception)
