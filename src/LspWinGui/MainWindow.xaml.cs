@@ -92,14 +92,26 @@ public partial class MainWindow : Window
         SaveSettings();
         SetBusy(true, "Validating Windows build tools…");
         BuildProgress.IsIndeterminate = true;
+        BuildProgress.Value = 0;
+        BuildDetailText.Text = "Validating toolchain and preparing reusable source/build cache…";
         try
         {
             var progress = new Progress<string>(AppendLog);
-            var result = await _builder.BuildAndInstallAsync(_latestCommit, ToolchainPathBox.Text, InstallPathBox.Text, progress);
+            var buildProgress = new Progress<BuildProgressUpdate>(update =>
+            {
+                BuildProgress.IsIndeterminate = update.IsIndeterminate;
+                BuildProgress.Value = Math.Clamp(update.Percent, 0, 100);
+                StatusText.Text = update.Status;
+                BuildDetailText.Text = update.Detail;
+            });
+            var result = await _builder.BuildAndInstallAsync(
+                _latestCommit, ToolchainPathBox.Text, InstallPathBox.Text, progress,
+                buildProgress: buildProgress);
             _settings.LastBuiltCommit = _latestCommit;
             SaveSettings();
             BuildProgress.IsIndeterminate = false;
             BuildProgress.Value = 100;
+            BuildDetailText.Text = $"Completed · {result.BundleCount} VST3 bundle(s) installed to {result.InstallPath}";
             StatusText.Text = $"Installed {result.BundleCount} VST3 bundle(s) from {ShortSha(_settings.LastBuiltCommit)}.";
             VersionText.Text = $"Installed: {ShortSha(_settings.LastBuiltCommit)}  ·  Latest: {ShortSha(_latestCommit)}";
             AppendLog($"Installed to: {result.InstallPath}");
@@ -109,7 +121,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             BuildProgress.IsIndeterminate = false;
-            BuildProgress.Value = 0;
+            BuildDetailText.Text = "Build stopped at the failed stage. The source checkout and incremental build cache were kept for the next attempt.";
             StatusText.Text = "Build failed. The saved installed version was not changed.";
             AppendLog($"BUILD FAILED: {ex}");
             ShowErrorDetails("Build failed", ex);
