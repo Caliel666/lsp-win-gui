@@ -187,9 +187,9 @@ public sealed class LspBuildService
         var stageDir = Path.Combine(root, "staging");
         Directory.CreateDirectory(root);
         buildProgress?.Report(new BuildProgressUpdate(2, "Preparing source checkout…", "Checking whether the existing source and build cache can be reused."));
-        var existingRepo = Directory.Exists(Path.Combine(sourceDir, ".git"))
-            ? await CaptureAsync(tools.Git, "rev-parse --is-inside-work-tree", null, cancellationToken, sourceDir)
-            : (1, string.Empty);
+        var existingRepo = (ExitCode: 1, Output: string.Empty);
+        if (Directory.Exists(Path.Combine(sourceDir, ".git")))
+            existingRepo = await CaptureAsync(tools.Git, "rev-parse --is-inside-work-tree", null, cancellationToken, sourceDir);
         if (existingRepo.ExitCode == 0 && existingRepo.Output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
         {
             var current = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken, sourceDir);
@@ -364,6 +364,8 @@ public sealed class LspBuildService
         var bundles = Directory.GetDirectories(stageDir, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
             throw new InvalidOperationException("The build completed but no .vst3 bundles were found in the staged install. Nothing was installed.");
+        buildProgress?.Report(new BuildProgressUpdate(95, "Installing VST3 bundles…",
+            $"Staged {bundles.Length} bundle(s) · copying them into {installPath}"));
 
         Directory.CreateDirectory(installPath);
         var backup = Path.Combine(root, "backup");
@@ -395,6 +397,8 @@ public sealed class LspBuildService
             throw;
         }
 
+        buildProgress?.Report(new BuildProgressUpdate(100, "Build and installation complete.",
+            $"Installed {bundles.Length} VST3 bundle(s) · {installPath}"));
         log.Report($"Build complete. Installed {bundles.Length} bundle(s).");
         return new BuildResult(bundles.Length, installPath);
     }
@@ -421,7 +425,7 @@ public sealed class LspBuildService
         }
 
         const string original = "#define SA(x) LSP_STATUS_ASSERT(x)";
-        const string diagnostic = "#define SA(x) do { status_t __lsp_status = (x); if (__lsp_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\\\n\", __FILE__, __LINE__, #x, int(__lsp_status)); return __lsp_status; } } while (false)";
+        const string diagnostic = "#define SA(x) do { status_t __lsp_status = (x); if (__lsp_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\n\", __FILE__, __LINE__, #x, int(__lsp_status)); return __lsp_status; } } while (false)";
         if (!content.Contains(original, StringComparison.Ordinal))
         {
             log.Report("VST3 module-info diagnostic hook skipped: upstream serializer macro no longer matches the expected source.");
