@@ -220,8 +220,13 @@ public sealed class LspBuildService
         // Force it explicitly: on some native Windows/MinGW combinations the process
         // reports i686 even though the selected compiler and plugin target are x64.
         // Without this, host-side tools are incorrectly compiled with -m32.
+        // Do not override PREFIX on Windows. Upstream make/paths.mk deliberately
+        // defaults it to $(BASEDIR)/INSTALL for Windows. Passing the POSIX default
+        // /usr/local makes Git for Windows' MSYS shell rewrite it to
+        // "C:/Program Files/Git/usr/local"; the resulting space-containing path
+        // breaks the quoted LSP_INSTALL_PREFIX compiler definition.
         var configOutput = await RunAsync(tools.Make,
-            "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64 PREFIX=/usr/local",
+            "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64",
             sourceDir, env, log, cancellationToken);
 
         // .config.mk is an exported variable cache, not a stable human-readable
