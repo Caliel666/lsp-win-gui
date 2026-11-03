@@ -437,7 +437,10 @@ public sealed class LspBuildService
             ["PROCESSOR_ARCHITECTURE"] = "AMD64",
             ["CC"] = null,
             ["CXX"] = null,
-            ["LD"] = null
+            ["LD"] = null,
+            // Prevent a machine-level DESTDIR environment variable from being
+            // inherited: Windows PREFIX is absolute and must not be prefixed.
+            ["DESTDIR"] = null
         };
         log?.Report("Build PATH order: validated MinGW bin first, GNU Make/PHP next, Git for Windows usr\\bin after MinGW (for sh.exe and Unix build utilities).");
         return result;
@@ -511,7 +514,7 @@ public sealed class LspBuildService
             var moduleInfoError = Regex.Match(output, @"Error creating moduleinfo\.json file,\s*error=(\d+)", RegexOptions.IgnoreCase);
             if (moduleInfoError.Success && moduleInfoError.Groups[1].Value == "28")
                 throw new InvalidOperationException(
-                    "VST3 packaging failed while generating moduleinfo.json: upstream LSP status 28 is STATUS_INVALID_VALUE. This commonly indicates an invalid output path or serializer state; it is not Windows error 28 or a disk-space code. The builder now installs directly to the native absolute Windows PREFIX instead of incorrectly concatenating DESTDIR with it. If this status persists, the remaining log identifies the upstream metadata operation that failed. The source checkout and .build cache have been preserved.\n\nLast build output:\n" + LastLines(output, 35));
+                    "VST3 packaging failed while generating moduleinfo.json: upstream LSP status 28 is STATUS_INVALID_VALUE. This commonly indicates an invalid output path or serializer state; it is not Windows error 28 or a disk-space code. The builder now installs directly to the native absolute Windows PREFIX instead of incorrectly concatenating DESTDIR with it. If this status persists after the path correction, inspect the final upstream install output for a separate metadata problem. The source checkout and .build cache have been preserved.\n\nLast build output:\n" + LastLines(output, 35));
             throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Last build output:\n{LastLines(output, 35)}");
         }
         lock (captureLock) return captured.ToString();
