@@ -358,7 +358,7 @@ public sealed class LspBuildService
             $"All build targets completed · {totalPlugins} plugin modules discovered · preparing bundle metadata."));
         log.Report("Staging installation…");
         buildProgress?.Report(new BuildProgressUpdate(90, "Installing VST3 bundle metadata…", "Generating moduleinfo.json and staging the compiled VST3 bundle."));
-        await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\", sourceDir, env, log, cancellationToken);
+        await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\"", sourceDir, env, log, cancellationToken);
 
         var bundles = Directory.GetDirectories(stageDir, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
