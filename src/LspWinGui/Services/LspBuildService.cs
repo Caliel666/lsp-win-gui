@@ -299,8 +299,9 @@ public sealed class LspBuildService
                            !name.Equals("lsp-plugins-ab-tester", StringComparison.OrdinalIgnoreCase) &&
                            Directory.Exists(Path.Combine(path, "src"));
                 })
-                .Select(Path.GetFileName)
+                .Select(path => Path.GetFileName(path))
                 .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var totalPlugins = pluginModules.Count;
