@@ -308,6 +308,7 @@ public sealed class LspBuildService
         var completedPlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activePlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var currentPlugin = "Preparing plugin build";
+        var progressLock = new object();
         var jobs = Math.Max(1, Environment.ProcessorCount);
         log.Report($"Compiling with {jobs} parallel jobs ({Environment.ProcessorCount} logical processors detected).");
         log.Report(totalPlugins > 0
@@ -319,6 +320,8 @@ public sealed class LspBuildService
 
         void ObserveBuildLine(string line)
         {
+            lock (progressLock)
+            {
             var moduleMatch = Regex.Match(line, @"\[(lsp-plugins-[a-z0-9][a-z0-9-]*)\]", RegexOptions.IgnoreCase);
             if (moduleMatch.Success && pluginModules.Contains(moduleMatch.Groups[1].Value))
             {
@@ -355,6 +358,7 @@ public sealed class LspBuildService
                 ? $"Building: {currentPlugin} · {completedPlugins.Count}/{totalPlugins} plugin modules complete · {activePlugins.Count} active · {jobs} parallel jobs"
                 : $"Building: {currentPlugin} · {jobs} parallel jobs";
             buildProgress?.Report(new BuildProgressUpdate(percent, "Compiling LSP plugins…", detail));
+            }
         }
 
         await RunAsync(tools.Make, $"-j{jobs} VERBOSE=1", sourceDir, env, log, cancellationToken, ObserveBuildLine);
