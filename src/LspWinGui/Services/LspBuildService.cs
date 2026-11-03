@@ -184,7 +184,16 @@ public sealed class LspBuildService
         log.Report("Cleaning previous build outputs…");
         await RunAsync(tools.Make, "clean", sourceDir, env, log, cancellationToken);
         log.Report("Configuring x64 VST3 + UI targets…");
-        await RunAsync(tools.Make, "config FEATURES=\"vst3 ui\" PREFIX=/usr/local", sourceDir, env, log, cancellationToken);
+        // Pass each feature as its own make variable. A space-containing FEATURES
+        // assignment is re-emitted through upstream MAKEFLAGS and can be split
+        // into an unintended make target on Windows.
+        await RunAsync(tools.Make, "config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 PREFIX=/usr/local", sourceDir, env, log, cancellationToken);
+        var configPath = Path.Combine(sourceDir, ".config.mk");
+        var configText = await File.ReadAllTextAsync(configPath, cancellationToken);
+        if (!Regex.IsMatch(configText, @"(?m)^ARCHITECTURE=x86_64\\s*$") ||
+            !Regex.IsMatch(configText, @"(?m)^HOST_ARCHITECTURE=x86_64\\s*$") ||
+            !Regex.IsMatch(configText, @"(?m)^BUILD_FEATURES=.*\\bui\\b.*\\bvst3\\b"))
+            throw new InvalidOperationException("Upstream configuration did not select x86_64 host/target architecture and both UI + VST3 features. Review .config.mk and the build log before continuing.");
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
         log.Report("Compiling LSP plugins. This may take a while…");
@@ -241,6 +250,10 @@ public sealed class LspBuildService
         {
             ["PATH"] = string.Join(Path.PathSeparator, paths),
             ["MSYSTEM"] = null,
+            // The upstream build scripts use PROCESSOR_ARCHITECTURE when running
+            // under native Windows rather than MinGW/MSYS. Force the validated
+            // x64 toolchain target so both host and target builds are x64.
+            ["PROCESSOR_ARCHITECTURE"] = "AMD64",
             ["CC"] = null,
             ["CXX"] = null,
             ["LD"] = null
