@@ -285,6 +285,7 @@ public sealed class LspBuildService
         buildProgress?.Report(new BuildProgressUpdate(15, "Fetching LSP components…", "Updating only dependencies required by this upstream revision."));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
+        await InstrumentVst3ModuleInfoFailureAsync(sourceDir, log, cancellationToken);
 
         var modulesDir = Path.Combine(sourceDir, "modules");
         var pluginModules = Directory.Exists(modulesDir)
@@ -396,6 +397,40 @@ public sealed class LspBuildService
 
         log.Report($"Build complete. Installed {bundles.Length} bundle(s).");
         return new BuildResult(bundles.Length, installPath);
+    }
+
+    private static async Task InstrumentVst3ModuleInfoFailureAsync(string sourceDir, IProgress<string> log, CancellationToken cancellationToken)
+    {
+        // Upstream currently reports only a numeric status if moduleinfo.json
+        // generation fails. Add a local compile-time trace around each serializer
+        // operation so the next failure identifies the exact invalid operation.
+        // This modifies only the disposable upstream checkout, never the app repo.
+        var header = Path.Combine(sourceDir, "modules", "lsp-plugin-fw", "include",
+            "lsp-plug.in", "plug-fw", "wrap", "vst3", "modinfo.h");
+        if (!File.Exists(header))
+        {
+            log.Report("VST3 module-info diagnostic hook skipped: upstream header was not found.");
+            return;
+        }
+
+        var content = await File.ReadAllTextAsync(header, cancellationToken);
+        if (content.Contains("VST3 moduleinfo serialization failed at", StringComparison.Ordinal))
+        {
+            log.Report("VST3 module-info serializer diagnostics are already enabled in the preserved checkout.");
+            return;
+        }
+
+        const string original = "#define SA(x) LSP_STATUS_ASSERT(x)";
+        const string diagnostic = "#define SA(x) do { status_t __lsp_status = (x); if (__lsp_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\\\n\", __FILE__, __LINE__, #x, int(__lsp_status)); return __lsp_status; } } while (false)";
+        if (!content.Contains(original, StringComparison.Ordinal))
+        {
+            log.Report("VST3 module-info diagnostic hook skipped: upstream serializer macro no longer matches the expected source.");
+            return;
+        }
+
+        content = content.Replace(original, diagnostic, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(header, content, new System.Text.UTF8Encoding(false), cancellationToken);
+        log.Report("Enabled precise upstream moduleinfo.json serializer diagnostics (source line + failed operation).");
     }
 
     private static Dictionary<string, string?> CreateBuildEnvironment(
