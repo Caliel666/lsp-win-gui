@@ -309,6 +309,9 @@ public sealed class LspBuildService
         var activePlugins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var currentPlugin = "Preparing plugin build";
         var progressLock = new object();
+        var lastReportedPlugin = string.Empty;
+        var lastReportedCompleted = -1;
+        var lastReportedActive = -1;
         var jobs = Math.Max(1, Environment.ProcessorCount);
         log.Report($"Compiling with {jobs} parallel jobs ({Environment.ProcessorCount} logical processors detected).");
         log.Report(totalPlugins > 0
@@ -357,7 +360,15 @@ public sealed class LspBuildService
             var detail = totalPlugins > 0
                 ? $"Building: {currentPlugin} · {completedPlugins.Count}/{totalPlugins} plugin modules complete · {activePlugins.Count} active · {jobs} parallel jobs"
                 : $"Building: {currentPlugin} · {jobs} parallel jobs";
-            buildProgress?.Report(new BuildProgressUpdate(percent, "Compiling LSP plugins…", detail));
+            if (!currentPlugin.Equals(lastReportedPlugin, StringComparison.Ordinal) ||
+                completedPlugins.Count != lastReportedCompleted ||
+                activePlugins.Count != lastReportedActive)
+            {
+                buildProgress?.Report(new BuildProgressUpdate(percent, "Compiling LSP plugins…", detail));
+                lastReportedPlugin = currentPlugin;
+                lastReportedCompleted = completedPlugins.Count;
+                lastReportedActive = activePlugins.Count;
+            }
             }
         }
 
