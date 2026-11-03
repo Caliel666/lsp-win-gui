@@ -181,8 +181,16 @@ public sealed class LspBuildService
             throw new InvalidOperationException($"Source checkout mismatch. Requested {commit}, got {actual.Output.Trim()}.");
 
         var env = CreateBuildEnvironment(tools.CompilerBin, tools.MakeBin, Path.GetDirectoryName(tools.Php)!, log);
-        log.Report("Cleaning previous build outputs…");
-        await RunAsync(tools.Make, "clean", sourceDir, env, log, cancellationToken);
+        var buildOutputDir = Path.Combine(sourceDir, ".build");
+        if (Directory.Exists(buildOutputDir))
+        {
+            log.Report("Removing previous build outputs with Windows-safe directory cleanup…");
+            await DeleteDirectorySafelyAsync(buildOutputDir, cancellationToken);
+        }
+        else
+        {
+            log.Report("Fresh source checkout; no previous build outputs to clean.");
+        }
         log.Report("Configuring x64 VST3 + UI targets…");
         // Pass each feature as its own make variable. A space-containing FEATURES
         // assignment is re-emitted through upstream MAKEFLAGS and can be split
