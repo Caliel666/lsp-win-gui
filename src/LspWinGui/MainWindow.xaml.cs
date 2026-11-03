@@ -10,6 +10,7 @@ public partial class MainWindow : Window
     private readonly SettingsService _settingsService = new();
     private readonly AppSettings _settings;
     private string? _latestCommit;
+    private string? _lastErrorDetails;
 
     public MainWindow()
     {
@@ -55,8 +56,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             StatusText.Text = "Could not check upstream source.";
-            AppendLog($"ERROR: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Source check failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            AppendLog($"ERROR: {ex}");
+            ShowErrorDetails("Source check failed", ex);
         }
         finally { SetBusy(false); }
     }
@@ -109,9 +110,41 @@ public partial class MainWindow : Window
             BuildProgress.Value = 0;
             StatusText.Text = "Build failed. The saved installed version was not changed.";
             AppendLog($"BUILD FAILED: {ex}");
-            MessageBox.Show(this, ex.Message, "Build failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            ShowErrorDetails("Build failed", ex);
         }
         finally { SetBusy(false); }
+    }
+
+    private void ShowErrorDetails(string title, Exception exception)
+    {
+        _lastErrorDetails = exception.ToString() + Environment.NewLine + Environment.NewLine +
+            "========== APPLICATION LOG ==========" + Environment.NewLine + LogBox.Text;
+        CopyErrorButton.Visibility = Visibility.Visible;
+        try
+        {
+            Clipboard.SetText(_lastErrorDetails);
+            StatusText.Text = "An error occurred. Full details copied to clipboard.";
+        }
+        catch
+        {
+            StatusText.Text = "An error occurred. Use Copy error details to copy the log.";
+        }
+        MessageBox.Show(this, exception.Message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    private void CopyErrorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastErrorDetails)) return;
+        try
+        {
+            Clipboard.SetText(_lastErrorDetails);
+            StatusText.Text = "Full error details copied to clipboard.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not access the clipboard: {ex.Message}", "Clipboard error",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void SaveSettings()
