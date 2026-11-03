@@ -51,6 +51,7 @@
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Text="BUILD STATUS" Foreground="{StaticResource MutedBrush}" FontSize="10" FontWeight="Bold"/>
                         <TextBlock x:Name="StatusText" Text="Ready — check upstream source to begin." FontSize="14" FontWeight="SemiBold" Margin="0,5,0,0"/>
