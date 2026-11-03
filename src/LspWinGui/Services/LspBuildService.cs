@@ -176,7 +176,7 @@ public sealed class LspBuildService
         log.Report($"Cloning official source at {commit}…");
         await RunAsync(tools.Git, $"clone --filter=blob:none {Repository} \"{sourceDir}\"", root, null, log, cancellationToken);
         await RunAsync(tools.Git, $"checkout {commit}", sourceDir, null, log, cancellationToken);
-        var actual = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken);
+        var actual = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken, sourceDir);
         if (actual.ExitCode != 0 || !actual.Output.Trim().Equals(commit, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Source checkout mismatch. Requested {commit}, got {actual.Output.Trim()}.");
 
@@ -268,9 +268,11 @@ public sealed class LspBuildService
             .Select(x => x.Trim().Trim('"')).Where(File.Exists).ToList();
     }
 
-    private static async Task<(int ExitCode, string Output)> CaptureAsync(string executable, string arguments, IDictionary<string, string?>? environment, CancellationToken cancellationToken)
+    private static async Task<(int ExitCode, string Output)> CaptureAsync(string executable, string arguments, IDictionary<string, string?>? environment, CancellationToken cancellationToken, string? workingDirectory = null)
     {
         var start = new ProcessStartInfo { FileName = executable, Arguments = arguments, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+            start.WorkingDirectory = workingDirectory;
         if (environment is not null)
             foreach (var item in environment)
                 if (item.Value is null) start.Environment.Remove(item.Key); else start.Environment[item.Key] = item.Value;
