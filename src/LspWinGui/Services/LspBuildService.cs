@@ -184,7 +184,6 @@ public sealed class LspBuildService
         var tools = await ValidateToolchainAsync(toolchainRoot, log, cancellationToken);
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LSP-Win-GUI");
         var sourceDir = Path.Combine(root, "source");
-        var stageDir = Path.Combine(root, "staging");
         Directory.CreateDirectory(root);
         buildProgress?.Report(new BuildProgressUpdate(2, "Preparing source checkout…", "Checking whether the existing source and build cache can be reused."));
         var existingRepo = (ExitCode: 1, Output: string.Empty);
@@ -219,11 +218,6 @@ public sealed class LspBuildService
         var actual = await CaptureAsync(tools.Git, "rev-parse HEAD", null, cancellationToken, sourceDir);
         if (actual.ExitCode != 0 || !actual.Output.Trim().Equals(commit, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Source checkout mismatch. Requested {commit}, got {actual.Output.Trim()}.");
-
-        // Staging is disposable; the source checkout and .build cache are not.
-        if (Directory.Exists(stageDir))
-            await DeleteDirectorySafelyAsync(stageDir, cancellationToken);
-        Directory.CreateDirectory(stageDir);
 
         var env = CreateBuildEnvironment(tools.CompilerBin, tools.MakeBin, Path.GetDirectoryName(tools.Php)!, log, tools.Git);
         var buildOutputDir = Path.Combine(sourceDir, ".build");
@@ -282,11 +276,25 @@ public sealed class LspBuildService
         log.Report("Verified plugin target: " + targetMatch.Groups[1].Value.Trim() +
                    "; configured features: " + string.Join(" ", configuredFeatures) +
                    "; Windows install prefix: " + configuredPrefix);
+
+        // On Windows the upstream PREFIX is already absolute (source\\INSTALL).
+        // DESTDIR is a Unix-style prefix concatenation mechanism; combining it
+        // with this drive-qualified PREFIX creates an invalid path such as
+        // stagingC:/.../source/INSTALL and makes vst_modinfo reject moduleinfo.json.
+        var sourceRoot = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var installRoot = Path.GetFullPath(configuredPrefix.Replace('/', Path.DirectorySeparatorChar));
+        if (!installRoot.StartsWith(sourceRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Upstream Windows install prefix '{installRoot}' is outside the source checkout. Refusing to clean or write to that location.");
+        if (Directory.Exists(installRoot))
+        {
+            log.Report($"Removing previous upstream install output at {installRoot}; the source checkout and .build cache remain untouched.");
+            await DeleteDirectorySafelyAsync(installRoot, cancellationToken);
+        }
+        Directory.CreateDirectory(installRoot);
         buildProgress?.Report(new BuildProgressUpdate(15, "Fetching LSP components…", "Updating only dependencies required by this upstream revision."));
         log.Report("Fetching upstream component repositories…");
         await RunAsync(tools.Make, "fetch", sourceDir, env, log, cancellationToken);
-        await InstrumentVst3ModuleInfoFailureAsync(sourceDir, log, cancellationToken);
-
         var modulesDir = Path.Combine(sourceDir, "modules");
         var pluginModules = Directory.Exists(modulesDir)
             ? Directory.GetDirectories(modulesDir, "lsp-plugins-*", SearchOption.TopDirectoryOnly)
@@ -358,10 +366,11 @@ public sealed class LspBuildService
         buildProgress?.Report(new BuildProgressUpdate(86, "Compilation complete — staging VST3…",
             $"All build targets completed · {totalPlugins} plugin modules discovered · preparing bundle metadata."));
         log.Report("Staging installation…");
-        buildProgress?.Report(new BuildProgressUpdate(90, "Installing VST3 bundle metadata…", "Generating moduleinfo.json and staging the compiled VST3 bundle."));
-        await RunAsync(tools.Make, $"install DESTDIR=\"{stageDir.Replace('\\', '/')}\"", sourceDir, env, log, cancellationToken);
+        buildProgress?.Report(new BuildProgressUpdate(90, "Installing VST3 bundle metadata…", "Generating moduleinfo.json directly under the upstream Windows INSTALL prefix."));
+        log.Report($"Running upstream install without DESTDIR; Windows PREFIX is already absolute: {installRoot}");
+        await RunAsync(tools.Make, "install", sourceDir, env, log, cancellationToken);
 
-        var bundles = Directory.GetDirectories(stageDir, "*.vst3", SearchOption.AllDirectories);
+        var bundles = Directory.GetDirectories(installRoot, "*.vst3", SearchOption.AllDirectories);
         if (bundles.Length == 0)
             throw new InvalidOperationException("The build completed but no .vst3 bundles were found in the staged install. Nothing was installed.");
         buildProgress?.Report(new BuildProgressUpdate(95, "Installing VST3 bundles…",
@@ -401,40 +410,6 @@ public sealed class LspBuildService
             $"Installed {bundles.Length} VST3 bundle(s) · {installPath}"));
         log.Report($"Build complete. Installed {bundles.Length} bundle(s).");
         return new BuildResult(bundles.Length, installPath);
-    }
-
-    private static async Task InstrumentVst3ModuleInfoFailureAsync(string sourceDir, IProgress<string> log, CancellationToken cancellationToken)
-    {
-        // Upstream currently reports only a numeric status if moduleinfo.json
-        // generation fails. Add a local compile-time trace around each serializer
-        // operation so the next failure identifies the exact invalid operation.
-        // This modifies only the disposable upstream checkout, never the app repo.
-        var header = Path.Combine(sourceDir, "modules", "lsp-plugin-fw", "include",
-            "lsp-plug.in", "plug-fw", "wrap", "vst3", "modinfo.h");
-        if (!File.Exists(header))
-        {
-            log.Report("VST3 module-info diagnostic hook skipped: upstream header was not found.");
-            return;
-        }
-
-        var content = await File.ReadAllTextAsync(header, cancellationToken);
-        if (content.Contains("VST3 moduleinfo serialization failed at", StringComparison.Ordinal))
-        {
-            log.Report("VST3 module-info serializer diagnostics are already enabled in the preserved checkout.");
-            return;
-        }
-
-        const string original = "#define SA(x) LSP_STATUS_ASSERT(x)";
-        const string diagnostic = "#define SA(x) do { status_t lsp_modinfo_status = (x); if (lsp_modinfo_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\n\", __FILE__, __LINE__, #x, int(lsp_modinfo_status)); return lsp_modinfo_status; } } while (false)";
-        if (!content.Contains(original, StringComparison.Ordinal))
-        {
-            log.Report("VST3 module-info diagnostic hook skipped: upstream serializer macro no longer matches the expected source.");
-            return;
-        }
-
-        content = content.Replace(original, diagnostic, StringComparison.Ordinal);
-        await File.WriteAllTextAsync(header, content, new System.Text.UTF8Encoding(false), cancellationToken);
-        log.Report("Enabled precise upstream moduleinfo.json serializer diagnostics (source line + failed operation).");
     }
 
     private static Dictionary<string, string?> CreateBuildEnvironment(
@@ -536,7 +511,7 @@ public sealed class LspBuildService
             var moduleInfoError = Regex.Match(output, @"Error creating moduleinfo\.json file,\s*error=(\d+)", RegexOptions.IgnoreCase);
             if (moduleInfoError.Success && moduleInfoError.Groups[1].Value == "28")
                 throw new InvalidOperationException(
-                    "VST3 packaging failed while generating moduleinfo.json: upstream LSP status 28 is STATUS_INVALID_VALUE (not Windows error 28 or a disk-space code). The VST3 module-info JSON serializer rejected an invalid write/state or metadata value. The C++ plugin build completed, but the bundle metadata step did not. The source checkout and .build cache have been preserved for diagnosis and retry.\n\nLast build output:\n" + LastLines(output, 35));
+                    "VST3 packaging failed while generating moduleinfo.json: upstream LSP status 28 is STATUS_INVALID_VALUE. This commonly indicates an invalid output path or serializer state; it is not Windows error 28 or a disk-space code. The builder now installs directly to the native absolute Windows PREFIX instead of incorrectly concatenating DESTDIR with it. If this status persists, the remaining log identifies the upstream metadata operation that failed. The source checkout and .build cache have been preserved.\n\nLast build output:\n" + LastLines(output, 35));
             throw new InvalidOperationException($"{Path.GetFileName(executable)} exited with code {process.ExitCode}. Last build output:\n{LastLines(output, 35)}");
         }
         lock (captureLock) return captured.ToString();
