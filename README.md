@@ -9,16 +9,16 @@ A Windows x64 desktop utility that checks the latest upstream LSP Audio Plugins 
 - Saves settings and source-version state in %LOCALAPPDATA%\\LSP-Win-GUI\\settings.json.
 - Uses PowerShell Get-Command gcc -All to discover the actual GCC executable instead of assuming a MinGW installation path.
 - Verifies that GCC targets x86_64-w64-mingw32, that matching G++ and ld.exe exist beside GCC, and that both C and C++ compile-and-link smoke tests succeed before it modifies the source checkout.
-- Rejects Git for Windows usr\\bin as a build-tool directory and places the validated MinGW bin directory first in the build PATH to prevent incompatible linker collisions.
+- Keeps Git for Windows `usr\\bin` available for `sh.exe` and Unix build utilities, but places the validated MinGW `bin` directory first so its matching linker and binutils take precedence.
 - Clones the exact checked commit, fetches upstream component repositories, stages the install, and only copies VST3 bundles after a successful build.
 
 The default install location is C:\\Program Files\\Common Files\\VST3. You can select a user-writable directory to avoid elevation.
 
 ## Build prerequisites
 
-- MinGW-w64 x64 GCC, G++, and matching binutils/linker.
+- MinGW-w64 x64 GCC 7.0 or newer, G++, and matching binutils/linker (all from the same toolchain installation).
 - GNU Make 4.2 or newer (MSYS2 GNU Make is recommended).
-- Git for Windows.
+- Git for Windows (the build uses its `usr\\bin` shell and Unix utilities; the app keeps these after the MinGW compiler directory in `PATH`).
 - PHP 5.5.14 or newer.
 
 The app discovers commands through PowerShell. If GCC is not on PATH, use the toolchain folder picker to point at the MinGW-w64 root or its bin folder. It will not silently guess C:\\mingw64. A failed compiler/linker smoke test stops the build before source checkout or cleanup.
@@ -37,11 +37,11 @@ GitHub Actions builds and publishes a self-contained Windows x64 executable on p
 
 ## Upstream build procedure
 
-The application follows the upstream source-build sequence:
+The application follows the upstream source-build sequence. On native Windows it explicitly sets both `ARCHITECTURE=x86_64` and `HOST_BUILD_ARCH=x86_64`; the latter prevents an i686 host detection result from injecting `-m32` into host-side tools. It verifies the resolved architecture and feature list from the `make config` summary (rather than guessing from internal `.config.mk` formatting):
 
 ```sh
 make clean
-make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64
+make config FEATURES=vst3 ADD_FEATURES=ui ARCHITECTURE=x86_64 HOST_BUILD_ARCH=x86_64
 make fetch
 make -j2
 make install DESTDIR=<staging-directory>
