@@ -336,7 +336,7 @@ public sealed class LspBuildService
                 }
             }
 
-            if (moduleMatch.Success && line.Contains("ld", StringComparison.OrdinalIgnoreCase))
+            if (moduleMatch.Success && Regex.IsMatch(line, @"^\s*ld\s+\[", RegexOptions.IgnoreCase))
             {
                 var module = moduleMatch.Groups[1].Value;
                 if (pluginModules.Contains(module))
@@ -425,7 +425,7 @@ public sealed class LspBuildService
         }
 
         const string original = "#define SA(x) LSP_STATUS_ASSERT(x)";
-        const string diagnostic = "#define SA(x) do { status_t __lsp_status = (x); if (__lsp_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\n\", __FILE__, __LINE__, #x, int(__lsp_status)); return __lsp_status; } } while (false)";
+        const string diagnostic = "#define SA(x) do { status_t lsp_modinfo_status = (x); if (lsp_modinfo_status != STATUS_OK) { fprintf(stderr, \"VST3 moduleinfo serialization failed at %s:%d: %s (status=%d)\\n\", __FILE__, __LINE__, #x, int(lsp_modinfo_status)); return lsp_modinfo_status; } } while (false)";
         if (!content.Contains(original, StringComparison.Ordinal))
         {
             log.Report("VST3 module-info diagnostic hook skipped: upstream serializer macro no longer matches the expected source.");
